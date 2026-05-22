@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>pose_estimation_pkg</name>
+  <version>0.1.0</version>
+  <description>6-DoF pose estimation using FoundationPose and SAM2 with ROS2 Jazzy</description>
+  <maintainer email="samanthkrishna2001@gmail.com">Samanth Krishna</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>tf2_ros</depend>
+  <depend>visualization_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

@@ -1,0 +1,180 @@
+<?xml version="1.0" ?>
+<sdf version="1.9">
+  <world name="table_scene">
+
+    <!--
+      Physics settings.
+      We use a 1ms timestep which gives stable simulation for rigid body contact.
+      Real time factor 1.0 means simulation runs at the same speed as wall clock time.
+    -->
+    <physics name="default_physics" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <!-- Plugins that Gazebo Harmonic needs to simulate sensors and physics -->
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+
+    <!-- Lighting: a directional sun light so the camera gets realistic color images -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- Ground plane so objects don't fall forever -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!--
+      TABLE
+      A simple white box at height 0.375m (standard table height / 2 because
+      the origin is at the center of the box, so top surface is at 0.75m).
+      We mark it static=true so physics doesn't waste time simulating it falling.
+    -->
+    <model name="table">
+      <static>true</static>
+      <pose>0.8 0 0.375 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>1.2 0.8 0.75</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>1.2 0.8 0.75</size></box>
+          </geometry>
+          <material>
+            <ambient>0.9 0.9 0.85 1</ambient>
+            <diffuse>0.9 0.9 0.85 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!--
+      TARGET OBJECT — Sugar Box (YCB object 004)
+      This is placed ON TOP of the table. Table top is at z=0.75m,
+      sugar box is ~0.088m tall, so center is at z = 0.75 + 0.044 = 0.794m.
+      This is the object FoundationPose will later estimate the pose of.
+      We give it a distinct red color so SAM2 can segment it easily.
+    -->
+    <model name="sugar_box">
+      <pose>0.8 0.0 0.794 0 0 0.3</pose>
+      <link name="link">
+        <inertial>
+          <mass>0.514</mass>
+          <inertia>
+            <ixx>0.00114</ixx><ixy>0</ixy><ixz>0</ixz>
+            <iyy>0.00222</iyy><iyz>0</iyz>
+            <izz>0.00177</izz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box><size>0.038 0.057 0.088</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.038 0.057 0.088</size></box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.2 0.1 1</ambient>
+            <diffuse>0.8 0.2 0.1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!--
+      RGB-D CAMERA
+      Positioned 1.2m above the table, angled 45 degrees downward to look at
+      the object. This mimics how a wrist-mounted or overhead camera would see
+      a table scene.
+
+      It has TWO sensors:
+      1. camera (RGB) — publishes color images
+      2. depth_camera — publishes depth images (distance per pixel in meters)
+
+      Both run at 30Hz which is standard for RealSense cameras.
+      The topic names match what ros_gz_bridge will forward to ROS2.
+    -->
+    <model name="realsense_d435i">
+      <pose>0.8 -0.5 1.45 0 0.7854 1.5708</pose>
+      <link name="link">
+
+        <visual name="visual">
+          <geometry>
+            <box><size>0.025 0.09 0.025</size></box>
+          </geometry>
+          <material>
+            <ambient>0.2 0.2 0.2 1</ambient>
+            <diffuse>0.2 0.2 0.2 1</diffuse>
+          </material>
+        </visual>
+
+        <!-- RGB sensor -->
+        <sensor name="color_camera" type="camera">
+          <pose>0 0 0 0 0 0</pose>
+          <always_on>true</always_on>
+          <update_rate>30</update_rate>
+          <camera>
+            <horizontal_fov>1.211</horizontal_fov>
+            <image>
+              <width>640</width>
+              <height>480</height>
+              <format>RGB_INT8</format>
+            </image>
+            <clip><near>0.1</near><far>10.0</far></clip>
+          </camera>
+          <topic>camera/color/image_raw</topic>
+        </sensor>
+
+        <!-- Depth sensor -->
+        <sensor name="depth_camera" type="depth_camera">
+          <pose>0 0 0 0 0 0</pose>
+          <always_on>true</always_on>
+          <update_rate>30</update_rate>
+          <camera>
+            <horizontal_fov>1.211</horizontal_fov>
+            <image>
+              <width>640</width>
+              <height>480</height>
+              <format>R_FLOAT32</format>
+            </image>
+            <clip><near>0.1</near><far>10.0</far></clip>
+          </camera>
+          <topic>camera/depth/image_raw</topic>
+        </sensor>
+
+      </link>
+    </model>
+
+  </world>
+</sdf>
