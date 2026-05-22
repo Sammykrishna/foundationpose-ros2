@@ -2,7 +2,7 @@
 
 Most robot manipulation demos you see online rely on AprilTags little printed markers stuck to objects that tell the robot exactly where something is. That's fine for demos, but it doesn't work in the real world where objects don't come with stickers.
 
-This project removes that dependency entirely. Point a depth camera at an object, give the system a 3D mesh of it, and it figures out the full 6-DoF pose — position and orientation in 3D space without any markers, without retraining, without any setup per object.
+This project removes that dependency entirely. Point a depth camera at an object, give the system a 3D mesh of it, and it figures out the full 6-DoF pose position and orientation in 3D space without any markers, without retraining, without any setup per object.
 
 The pipeline runs in ROS2 Jazzy with Gazebo simulation and is designed to feed directly into MoveIt2 for actual robot grasping.
 
@@ -15,7 +15,7 @@ The pipeline runs in ROS2 Jazzy with Gazebo simulation and is designed to feed d
 
 ## What it does
 
-An RGB-D camera feed goes through two stages. First, SAM2 (Meta's segment anything model) automatically segments the target object from the scene — no bounding box needed from the user. That mask gets handed to FoundationPose (NVIDIA, 2024), which estimates the full 6-DoF pose and publishes it as a `geometry_msgs/PoseStamped` on a ROS2 topic. MoveIt2 picks that up and plans a collision-free grasp.
+An RGB-D camera feed goes through two stages. First, SAM2 (Meta's segment anything model) automatically segments the target object from the scene, no bounding box needed from the user. That mask gets handed to FoundationPose (NVIDIA, 2024), which estimates the full 6-DoF pose and publishes it as a `geometry_msgs/PoseStamped` on a ROS2 topic. MoveIt2 picks that up and plans a collision-free grasp.
 
 The whole thing runs in Gazebo Harmonic so you don't need physical hardware to develop or test it.
 
@@ -68,7 +68,7 @@ foundationpose-ros2/
 ## Roadmap
 
 - [x] Repository scaffold and project structure
-- [ ] Gazebo simulation with RGB-D camera (Intel RealSense D435i)
+- [x] Gazebo simulation with RGB-D camera (Intel RealSense D435i)
 - [ ] FoundationPose ROS2 node — subscribes to depth + color topics, publishes PoseStamped
 - [ ] SAM2 segmentation node — automatic object masking, no bounding box required
 - [ ] Full pipeline integration and visualization in RViz2
@@ -102,7 +102,7 @@ Docker instructions will be added in the next commit once the simulation environ
 
 ## Background
 
-This project is part of my M.Sc. Mechatronics studies at RWU Weingarten, building on earlier work in autonomous manipulation and sensor fusion. The goal is to get to a point where a robot arm can pick up an arbitrary object from a table — no markers, no object-specific training — purely from a depth camera and a mesh file.
+This project is part of my M.Sc. Mechatronics studies at RWU Weingarten, building on earlier work in autonomous manipulation and sensor fusion. The goal is to get to a point where a robot arm can pick up an arbitrary object from a table, no markers, no object-specific training, purely from a depth camera and a mesh file.
 
 ---
 
