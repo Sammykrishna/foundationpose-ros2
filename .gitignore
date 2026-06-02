@@ -6,3 +6,6 @@ __pycache__/
 .env
 *.bag
 *.db3
+FoundationPose/weights/
+FoundationPose/weights_download/
+fpenv/
