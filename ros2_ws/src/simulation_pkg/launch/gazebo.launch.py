@@ -12,6 +12,7 @@ def generate_launch_description():
 
     world_file = os.path.join(pkg_sim, 'worlds', 'table_scene.sdf')
     params_file = os.path.join(pkg_pose, 'config', 'params.yaml')
+    rviz_config = os.path.join(pkg_sim, 'rviz', 'pose_estimation.rviz')
 
     # Path to your venv's site-packages
     # This tells ROS2 nodes where to find trimesh, torch, cv2 etc.
@@ -70,6 +71,7 @@ def generate_launch_description():
                 package='rviz2',
                 executable='rviz2',
                 name='rviz2',
+                arguments=['-d', rviz_config],
                 output='screen'
             )
         ]
