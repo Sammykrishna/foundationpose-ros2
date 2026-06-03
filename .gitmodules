@@ -1,3 +1,6 @@
 [submodule "FoundationPose"]
 	path = FoundationPose
 	url = https://github.com/NVlabs/FoundationPose.git
+[submodule "sam2"]
+	path = sam2
+	url = https://github.com/facebookresearch/sam2.git

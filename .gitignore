@@ -9,3 +9,4 @@ __pycache__/
 FoundationPose/weights/
 FoundationPose/weights_download/
 fpenv/
+sam2/checkpoints/

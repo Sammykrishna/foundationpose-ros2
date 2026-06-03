@@ -10,6 +10,7 @@ Topics subscribed:
   /camera/color/image_raw      (sensor_msgs/Image)
   /camera/depth/image_raw      (sensor_msgs/Image)
   /camera/color/camera_info    (sensor_msgs/CameraInfo)
+  /object_mask                 (sensor_msgs/Image)  <- from SAM2 node
 
 Topics published:
   /object_pose                 (geometry_msgs/PoseStamped)
@@ -25,28 +26,13 @@ import rclpy # type: ignore
 from rclpy.node import Node # type: ignore
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy # type: ignore
 
-# ROS2 message types we use
 from sensor_msgs.msg import Image, CameraInfo # type: ignore
 from geometry_msgs.msg import PoseStamped # type: ignore
 from visualization_msgs.msg import Marker # type: ignore
-
-# cv_bridge converts between ROS2 Image messages and OpenCV numpy arrays
-# Without this we'd have to manually parse the raw byte buffer
 from cv_bridge import CvBridge # type: ignore
-
-# message_filters lets us synchronize two topics by timestamp
-# We need color and depth images taken at the SAME moment
-# If we subscribed to them independently, we might pair a color frame
-# from t=1.000s with a depth frame from t=1.033s — that mismatch
-# would give FoundationPose bad data and wrong poses
 import message_filters # type: ignore
-
-# scipy for converting rotation matrix -> quaternion
-# ROS2 uses quaternions for orientation, FoundationPose gives a 4x4 matrix
 from scipy.spatial.transform import Rotation
 
-# FoundationPose imports — these come from the cloned repo
-# We add it to the path so Python can find it
 FOUNDATIONPOSE_PATH = os.path.join(
     os.path.dirname(__file__), '../../../../..', 'FoundationPose'
 )
@@ -76,9 +62,6 @@ class FoundationPoseNode(Node):
     def __init__(self):
         super().__init__('foundationpose_node')
 
-        # ---- Parameters ----
-        # Using ROS2 parameters means you can change these from the
-        # command line or launch file without editing code
         self.declare_parameter('mesh_path', '')
         self.declare_parameter('weights_dir', '')
         self.declare_parameter('score_threshold', 0.3)
@@ -93,15 +76,13 @@ class FoundationPoseNode(Node):
         self.get_logger().info(f"  Mesh: {mesh_path}")
         self.get_logger().info(f"  Weights: {weights_dir}")
 
-        # ---- Internal state ----
         self.bridge = CvBridge()
-        self.camera_intrinsics = None   # filled when first CameraInfo arrives
-        self.estimator = None           # FoundationPose model instance
-        self.mesh = None                # trimesh object
-        self.is_initialized = False     # False = need to run initialization
+        self.camera_intrinsics = None
+        self.estimator = None
+        self.mesh = None
+        self.is_initialized = False
         self.frame_count = 0
 
-        # ---- Load mesh ----
         if mesh_path and os.path.exists(mesh_path):
             self.get_logger().info("Loading mesh...")
             self.mesh = trimesh.load(mesh_path)
@@ -113,23 +94,16 @@ class FoundationPoseNode(Node):
                 f"Mesh not found at '{mesh_path}', will use mock pose"
             )
 
-        # ---- Load FoundationPose model ----
         if FOUNDATIONPOSE_AVAILABLE and self.mesh is not None and weights_dir:
             self._load_model(weights_dir)
 
-        # ---- QoS Profile ----
-        # BEST_EFFORT matches Gazebo's publisher QoS
-        # If we used RELIABLE here and Gazebo uses BEST_EFFORT,
-        # ROS2 would refuse to connect them — a common gotcha
+        # BEST_EFFORT matches Gazebo's publisher QoS to avoid connection refusals.
         qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=1  # we only care about the latest frame, not a backlog
+            depth=1
         )
 
-        # ---- Subscribers ----
-        # We subscribe to CameraInfo separately (not synchronized)
-        # because it barely changes — we just need it once to get K matrix
         self.info_sub = self.create_subscription(
             CameraInfo,
             '/camera/color/camera_info',
@@ -137,9 +111,6 @@ class FoundationPoseNode(Node):
             qos
         )
 
-        # Synchronized subscribers for color + depth
-        # message_filters.Subscriber wraps a normal ROS2 subscription
-        # so it can be fed into the synchronizer
         color_sub = message_filters.Subscriber(
             self, Image, '/camera/color/image_raw',
             qos_profile=qos
@@ -149,17 +120,23 @@ class FoundationPoseNode(Node):
             qos_profile=qos
         )
 
-        # ApproximateTimeSynchronizer pairs messages whose timestamps
-        # are within 'slop' seconds of each other
-        # queue_size=5 means it buffers up to 5 messages while waiting for a match
+        # 50ms tolerance is fine for a 30Hz camera stream.
         self.sync = message_filters.ApproximateTimeSynchronizer(
             [color_sub, depth_sub],
             queue_size=5,
-            slop=0.05  # 50ms tolerance — fine for 30Hz camera
+            slop=0.05
         )
         self.sync.registerCallback(self._rgbd_callback)
 
-        # ---- Publishers ----
+        self.sam2_mask = None
+        self.mask_sub = self.create_subscription(
+            Image,
+            '/object_mask',
+            self._mask_callback,
+            qos
+        )
+        self.get_logger().info("Subscribed to /object_mask from SAM2 node")
+
         self.pose_pub = self.create_publisher(
             PoseStamped, '/object_pose', 10
         )
@@ -170,7 +147,6 @@ class FoundationPoseNode(Node):
         self.get_logger().info("FoundationPose node ready. Waiting for camera data...")
 
     def _load_model(self, weights_dir):
-        """Load the FoundationPose neural network weights."""
         import torch
         from estimater import ScorePredictor, PoseRefinePredictor # type: ignore
 
@@ -203,20 +179,6 @@ class FoundationPoseNode(Node):
             self.get_logger().warn("Falling back to mock mode")
 
     def _camera_info_callback(self, msg: CameraInfo):
-        """
-        Extract the camera intrinsic matrix K from CameraInfo.
-        
-        K is a 3x3 matrix:
-        [fx  0  cx]
-        [ 0 fy  cy]
-        [ 0  0   1]
-        
-        fx, fy = focal lengths in pixels
-        cx, cy = principal point (optical center) in pixels
-        
-        FoundationPose needs K to convert the 2D depth image into
-        a 3D point cloud — it uses K to "unproject" each pixel.
-        """
         if self.camera_intrinsics is None:
             K = np.array(msg.k).reshape(3, 3)
             self.camera_intrinsics = K
@@ -226,42 +188,34 @@ class FoundationPoseNode(Node):
                 f"  cx={K[0,2]:.1f}, cy={K[1,2]:.1f}"
             )
 
+    def _mask_callback(self, msg: Image):
+        """Cache the latest segmentation mask from the SAM2 node."""
+        try:
+            self.sam2_mask = self.bridge.imgmsg_to_cv2(msg, desired_encoding='mono8')
+        except Exception as e:
+            self.get_logger().warn(f"Failed to decode SAM2 mask: {e}")
+
     def _rgbd_callback(self, color_msg: Image, depth_msg: Image):
-        """
-        Main callback — called every time we get a synchronized color+depth pair.
-        This runs at 30Hz.
-        """
-        # Don't process until we have camera intrinsics
         if self.camera_intrinsics is None:
             return
 
         self.frame_count += 1
 
-        # ---- Convert ROS2 messages to numpy arrays ----
-        # cv_bridge handles the encoding conversion for us
-        # color: ROS BGR8 -> numpy (H, W, 3) uint8
         color_image = self.bridge.imgmsg_to_cv2(
             color_msg, desired_encoding='bgr8'
         )
-        # depth: ROS 32FC1 (float meters) -> numpy (H, W) float32
         depth_image = self.bridge.imgmsg_to_cv2(
             depth_msg, desired_encoding='32FC1'
         )
 
-        # ---- Estimate pose ----
         if self.estimator is not None:
             pose_matrix = self._run_foundationpose(color_image, depth_image)
         else:
-            # Mock mode: return a static pose above the table
-            # This is useful for testing the ROS2 pipeline end-to-end
-            # before the model is fully set up
             pose_matrix = self._mock_pose()
 
-        # ---- Publish results ----
         if pose_matrix is not None:
             self._publish_pose(pose_matrix, color_msg.header)
 
-        # Log progress every 30 frames (once per second at 30Hz)
         if self.frame_count % 30 == 0:
             mode = "TRACKING" if self.is_initialized else "INITIALIZING"
             self.get_logger().info(
@@ -270,31 +224,28 @@ class FoundationPoseNode(Node):
             )
 
     def _run_foundationpose(self, color: np.ndarray, depth: np.ndarray):
-        """
-        Run FoundationPose on one RGB-D frame.
-        Returns a 4x4 numpy pose matrix, or None if estimation failed.
-        """
         try:
-            # FoundationPose expects RGB not BGR (OpenCV default is BGR)
+            # FoundationPose expects RGB, but OpenCV defaults to BGR.
             rgb = cv2.cvtColor(color, cv2.COLOR_BGR2RGB)
 
-            # Depth needs to be in meters as float32
-            # Gazebo publishes in meters already, so no conversion needed
-            # A real RealSense publishes in millimeters, so you'd divide by 1000
+            # Note: Gazebo publishes depth in meters. A real RealSense 
+            # publishes in millimeters, so you would need to divide by 1000.
 
             if not self.is_initialized:
-                # INITIALIZATION MODE
-                # We need an initial mask to tell FoundationPose roughly
-                # where the object is. Later SAM2 will provide this automatically.
-                # For now we generate a simple mask based on depth threshold.
-                mask = self._generate_depth_mask(depth)
+                if self.sam2_mask is not None:
+                    mask = self.sam2_mask
+                else:
+                    self.get_logger().warn(
+                        "No SAM2 mask yet — falling back to depth threshold mask"
+                    )
+                    mask = self._generate_depth_mask(depth)
 
                 poses = self.estimator.register( # pyright: ignore[reportOptionalMemberAccess]
                     K=self.camera_intrinsics,
                     rgb=rgb,
                     depth=depth,
                     ob_mask=mask,
-                    iteration=5   # more iterations = more accurate but slower
+                    iteration=5
                 )
 
                 if poses is not None and len(poses) > 0:
@@ -305,14 +256,12 @@ class FoundationPoseNode(Node):
                 else:
                     self.get_logger().warn("Initialization failed, retrying...")
                     return None
-
             else:
-                # TRACKING MODE — much faster
                 pose = self.estimator.track_one( # type: ignore
                     rgb=rgb,
                     depth=depth,
                     K=self.camera_intrinsics,
-                    iteration=2   # fewer iterations needed for tracking
+                    iteration=2
                 )
                 self.current_pose = pose
                 return pose
@@ -323,63 +272,32 @@ class FoundationPoseNode(Node):
 
     def _generate_depth_mask(self, depth: np.ndarray) -> np.ndarray:
         """
-        Generate a binary mask for initialization.
-        
-        We look for pixels where the depth value is consistent with
-        an object sitting on the table (~0.75m from camera origin,
-        adjusted for camera height).
-        
-        This is a simple heuristic. SAM2 (Step 4) will replace this
-        with a proper learned segmentation.
+        Generate a binary mask for initialization based on depth heuristics.
+        Assumes camera is at z=1.45m, table top at z=0.75m, and object is ~0.088m tall.
         """
-        # Camera is at z=1.45m, table top at z=0.75m
-        # So depth to table surface ≈ 0.70m
-        # Object is ~0.088m tall, so object depth ≈ 0.61m to 0.70m
         mask = np.logical_and(depth > 0.5, depth < 0.72).astype(np.uint8) * 255
 
-        # Clean up noise with morphological operations
         kernel = np.ones((5, 5), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)   # remove small dots
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)  # fill small holes
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
         return mask
 
     def _mock_pose(self) -> np.ndarray:
-        """
-        Return a fake 4x4 pose matrix for testing the pipeline
-        when FoundationPose is not yet loaded.
-        
-        Places the object at a fixed position in front of the camera.
-        """
-        pose = np.eye(4)  # identity matrix = no rotation, at origin
-        pose[0, 3] = 0.8  # x = 0.8m (in front of camera)
-        pose[1, 3] = 0.0  # y = 0.0m (centered)
-        pose[2, 3] = 0.75 # z = 0.75m (table height)
+        """Return a fake 4x4 pose matrix for pipeline testing."""
+        pose = np.eye(4)
+        pose[0, 3] = 0.8  
+        pose[1, 3] = 0.0  
+        pose[2, 3] = 0.75 
         return pose
 
     def _publish_pose(self, pose_matrix: np.ndarray, header):
-        """
-        Convert a 4x4 pose matrix to ROS2 PoseStamped and publish it.
-        
-        A 4x4 transformation matrix looks like:
-        [R R R tx]
-        [R R R ty]   R = 3x3 rotation matrix
-        [R R R tz]   t = translation vector (x, y, z)
-        [0 0 0  1]
-        
-        ROS2 PoseStamped uses:
-        - position: (x, y, z) in meters
-        - orientation: quaternion (x, y, z, w)
-        """
-        # Extract translation from last column of matrix
+        """Convert a 4x4 pose matrix to a ROS2 PoseStamped and publish it."""
         translation = pose_matrix[:3, 3]
-
-        # Extract rotation matrix (top-left 3x3) and convert to quaternion
         rotation_matrix = pose_matrix[:3, :3]
         rotation = Rotation.from_matrix(rotation_matrix)
-        quat = rotation.as_quat()  # type: ignore # returns [x, y, z, w]
+        quat = rotation.as_quat()  # type: ignore
 
-        # Build PoseStamped message
         pose_msg = PoseStamped()
         pose_msg.header = header
         pose_msg.header.frame_id = 'world'
@@ -394,35 +312,26 @@ class FoundationPoseNode(Node):
         pose_msg.pose.orientation.w = float(quat[3])
 
         self.pose_pub.publish(pose_msg)
-
-        # Also publish a visual marker for RViz2
-        # Without this you'd have no visual feedback that pose estimation is working
         self._publish_marker(pose_msg)
 
     def _publish_marker(self, pose_msg: PoseStamped):
-        """
-        Publish a green arrow marker in RViz2 showing the estimated pose.
-        The arrow points in the object's +Z direction.
-        """
+        """Publish a green arrow marker in RViz2 showing the estimated pose."""
         marker = Marker()
         marker.header = pose_msg.header
         marker.ns = 'object_pose'
         marker.id = 0
         marker.type = Marker.ARROW
         marker.action = Marker.ADD
-
         marker.pose = pose_msg.pose
 
-        # Arrow dimensions
-        marker.scale.x = 0.1   # shaft length
-        marker.scale.y = 0.01  # shaft diameter
-        marker.scale.z = 0.01  # head diameter
+        marker.scale.x = 0.1   
+        marker.scale.y = 0.01  
+        marker.scale.z = 0.01  
 
-        # Green color
         marker.color.r = 0.0
         marker.color.g = 1.0
         marker.color.b = 0.0
-        marker.color.a = 1.0  # alpha=1 means fully opaque
+        marker.color.a = 1.0  
 
         self.marker_pub.publish(marker)
 
