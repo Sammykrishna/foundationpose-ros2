@@ -46,9 +46,24 @@ def generate_launch_description():
         output='screen'
     )
 
-    # 3. FoundationPose node — with venv PYTHONPATH injected
+    # 3. SAM2 node — starts at 4s so its mask is ready before FoundationPose inits
+    sam2_node = TimerAction(
+        period=4.0,
+        actions=[
+            Node(
+                package='pose_estimation_pkg',
+                executable='sam2_node',
+                name='sam2_node',
+                parameters=[params_file],
+                output='screen',
+                additional_env={'PYTHONPATH': new_pythonpath}
+            )
+        ]
+    )
+
+    # 4. FoundationPose node — delayed to 7s to give SAM2 a 3-second head start
     pose_node = TimerAction(
-        period=5.0,
+        period=7.0,
         actions=[
             Node(
                 package='pose_estimation_pkg',
@@ -56,14 +71,12 @@ def generate_launch_description():
                 name='foundationpose_node',
                 parameters=[params_file],
                 output='screen',
-                # This is the key fix — inject venv site-packages into
-                # the node's Python path so it can find trimesh, torch etc.
                 additional_env={'PYTHONPATH': new_pythonpath}
             )
         ]
     )
 
-    # 4. RViz2
+    # 5. RViz2
     rviz = TimerAction(
         period=4.0,
         actions=[
@@ -77,4 +90,4 @@ def generate_launch_description():
         ]
     )
 
-    return LaunchDescription([gazebo, bridge, pose_node, rviz])
+    return LaunchDescription([gazebo, bridge, sam2_node, pose_node, rviz])
