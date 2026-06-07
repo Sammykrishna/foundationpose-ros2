@@ -13,3 +13,13 @@ sam2_node:
     prompt_point_x: 0.5
     prompt_point_y: 0.5
     confidence_threshold: 0.7
+
+grasp_executor:
+  ros__parameters:
+    robot_name: "ur5e"
+    planning_group: "ur_manipulator"
+    end_effector_link: "tool0"
+    pre_grasp_height: 0.15
+    pose_stability_count: 10
+    planning_time: 5.0
+    max_velocity_scaling: 0.3

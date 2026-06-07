@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>robot_control_pkg</name>
+  <version>0.1.0</version>
+  <description>
+    MoveIt2 grasp executor — receives 6-DoF object pose from
+    FoundationPose and plans collision-free grasp trajectories
+    for a UR5e robot arm
+  </description>
+  <maintainer email="samanthkrishna2001@gmail.com">Samanth Krishna</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>moveit_ros_planning_interface</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>trajectory_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>ur_description</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
