@@ -71,8 +71,8 @@ foundationpose-ros2/
 - [x] Gazebo simulation with RGB-D camera (Intel RealSense D435i)
 - [x] FoundationPose ROS2 node — subscribes to depth + color topics, publishes PoseStamped
 - [x] SAM2 segmentation node — automatic object masking, no bounding box required
-- [ ] Full pipeline integration and visualization in RViz2
-- [ ] MoveIt2 grasp execution using estimated pose
+- [x] Full pipeline integration and visualization in RViz2
+- [x] MoveIt2 grasp execution using estimated pose
 - [ ] Benchmark on YCB-Video objects — reporting ADD (Average Distance) metric
 - [ ] Demo video and results
 
