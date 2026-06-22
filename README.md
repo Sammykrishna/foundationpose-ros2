@@ -20,6 +20,8 @@ An RGB-D camera feed goes through two stages. First, SAM2 (Meta's segment anythi
 The whole thing runs in Gazebo Harmonic so you don't need physical hardware to develop or test it.
 
 ---
+![RViz2 Visualization](docs/media/rviz2-visualization.png)
+*Figure: Complete visualization pipeline in RViz2 - showing the UR5e robot model, coordinate transforms (TF), estimated 6-DoF pose from FoundationPose, grasp markers, and SAM2 segmentation overlay*
 
 ## Why this matters
 
@@ -69,20 +71,11 @@ foundationpose-ros2/
 
 - [x] Repository scaffold and project structure
 - [x] Gazebo simulation with RGB-D camera (Intel RealSense D435i)
-<<<<<<< HEAD
-- [x] FoundationPose ROS2 node subscribes to depth + color topics, publishes PoseStamped
-- [x] SAM2 segmentation node automatic object masking, no bounding box required
-- [x] Full pipeline integration and visualization in RViz2
-- [x] MoveIt2 grasp execution using estimated pose
-- [ ] Benchmark on YCB-Video objects reporting ADD (Average Distance) metric
-- [ ] Demo video and results
-=======
 - [x] FoundationPose ROS2 node — subscribes to depth + color topics, publishes PoseStamped
 - [x] SAM2 segmentation node — automatic object masking, no bounding box required
 - [x] Full pipeline integration and visualization in RViz2
 - [x] MoveIt2 grasp execution using estimated pose
-- [x] Benchmark on YCB-Video objects — reporting ADD (Average Distance) metric
->>>>>>> cc7afc4 (fix: resolve FoundationPose weights folder structure)
+- [ ] Benchmark on YCB-Video objects — reporting ADD (Average Distance) metric
 
 ---
 ## Getting started
