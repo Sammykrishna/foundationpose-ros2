@@ -29,6 +29,7 @@ setup(
         'console_scripts': [
             'foundationpose_node = pose_estimation_pkg.foundationpose_node:main',
             'sam2_node = pose_estimation_pkg.sam2_node:main',
+            'benchmark_node = pose_estimation_pkg.benchmark_node:main',
         ],
     },
 )

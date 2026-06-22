@@ -23,3 +23,10 @@ grasp_executor:
     pose_stability_count: 10
     planning_time: 5.0
     max_velocity_scaling: 0.3
+
+benchmark_node:
+  ros__parameters:
+    mesh_path: "/home/samanth-krishna/projects/ros2_ws/src/foundationpose-ros2/ros2_ws/src/pose_estimation_pkg/meshes/sugar_box/textured.obj"
+    results_dir: "/home/samanth-krishna/projects/ros2_ws/src/foundationpose-ros2/results"
+    num_samples: 200
+    warmup_frames: 30

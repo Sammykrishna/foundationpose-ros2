@@ -33,9 +33,7 @@ from cv_bridge import CvBridge # type: ignore
 import message_filters # type: ignore
 from scipy.spatial.transform import Rotation
 
-FOUNDATIONPOSE_PATH = os.path.join(
-    os.path.dirname(__file__), '../../../../..', 'FoundationPose'
-)
+FOUNDATIONPOSE_PATH = '/home/samanth-krishna/projects/ros2_ws/src/foundationpose-ros2/FoundationPose'
 sys.path.insert(0, os.path.abspath(FOUNDATIONPOSE_PATH))
 
 try:
@@ -147,6 +145,7 @@ class FoundationPoseNode(Node):
         self.get_logger().info("FoundationPose node ready. Waiting for camera data...")
 
     def _load_model(self, weights_dir):
+        """Load the FoundationPose neural network weights."""
         import torch
         from estimater import ScorePredictor, PoseRefinePredictor # type: ignore
 
@@ -159,12 +158,20 @@ class FoundationPoseNode(Node):
             scorer_path = os.path.join(weights_dir, 'scorer', 'model_best.pth')
             refiner_path = os.path.join(weights_dir, 'refiner', 'model_best.pth')
 
-            scorer.model.load_state_dict(
-                torch.load(scorer_path, map_location='cuda')
-            )
-            refiner.model.load_state_dict(
-                torch.load(refiner_path, map_location='cuda')
-            )
+            # Load weights directly into model state dict
+            scorer_ckpt = torch.load(scorer_path, map_location='cuda')
+            refiner_ckpt = torch.load(refiner_path, map_location='cuda')
+
+            # Handle both raw state dict and wrapped checkpoint formats
+            if isinstance(scorer_ckpt, dict) and 'model' in scorer_ckpt:
+                scorer.model.load_state_dict(scorer_ckpt['model'])
+            else:
+                scorer.model.load_state_dict(scorer_ckpt)
+
+            if isinstance(refiner_ckpt, dict) and 'model' in refiner_ckpt:
+                refiner.model.load_state_dict(refiner_ckpt['model'])
+            else:
+                refiner.model.load_state_dict(refiner_ckpt)
 
             self.estimator = FPEstimator(
                 scorer=scorer,
