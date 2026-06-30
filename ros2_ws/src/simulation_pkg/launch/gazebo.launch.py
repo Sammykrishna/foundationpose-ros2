@@ -24,12 +24,22 @@ def generate_launch_description():
         'foundationpose-ros2/fpenv/lib/python3.12/site-packages'
     )
 
+    sam2_path = '/home/samanth-krishna/projects/ros2_ws/src/foundationpose-ros2/sam2'
+
     current_pythonpath = os.environ.get('PYTHONPATH', '')
-    new_pythonpath = venv_site_packages + ':' + current_pythonpath
+    new_pythonpath = venv_site_packages + ':' + sam2_path + ':' + current_pythonpath
 
     gazebo = ExecuteProcess(
-        cmd=['gz', 'sim', '-r', '-v', '4', world_file],
-        output='screen'
+        cmd=['gz', 'sim', '-s', '-r', '-v', '4', world_file],
+        output='screen',
+        additional_env={
+            '__NV_PRIME_RENDER_OFFLOAD': '1',
+            '__GLX_VENDOR_LIBRARY_NAME': 'nvidia',
+            '__EGL_VENDOR_LIBRARY_FILENAMES':
+                '/usr/share/glvnd/egl_vendor.d/10_nvidia.json',
+            'DRI_PRIME': '1',
+            'DISPLAY': os.environ.get('DISPLAY', ':1'),
+        }
     )
 
     bridge = Node(
@@ -88,11 +98,43 @@ def generate_launch_description():
         ]
     )
 
+    scene_markers = Node(
+        package='simulation_pkg',
+        executable='scene_markers_node',
+        name='scene_markers_node',
+        output='screen'
+    )
+
     static_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='world_to_base_link',
-        arguments=['0', '0', '0', '0', '0', '0', 'world', 'base_link'],
+        arguments=['--x', '-0.1', '--y', '0', '--z', '0',
+                   '--roll', '0', '--pitch', '0', '--yaw', '0',
+                   '--frame-id', 'world',
+                   '--child-frame-id', 'base_link'],
+        output='screen'
+    )
+
+    static_tf_camera = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='world_to_camera',
+        arguments=['--x', '0.8', '--y', '-0.5', '--z', '1.45',
+                   '--roll', '0', '--pitch', '0.9195', '--yaw', '1.5708',
+                   '--frame-id', 'world',
+                   '--child-frame-id', 'realsense_d435i/link/color_camera'],
+        output='screen'
+    )
+
+    static_tf_camera_optical = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='camera_to_optical',
+        arguments=['--x', '0', '--y', '0', '--z', '0',
+                   '--qx', '0.5', '--qy', '-0.5', '--qz', '0.5', '--qw', '-0.5',
+                   '--frame-id', 'realsense_d435i/link/color_camera',
+                   '--child-frame-id', 'realsense_d435i/link/color_camera_optical'],
         output='screen'
     )
 
@@ -143,8 +185,11 @@ def generate_launch_description():
         gazebo,
         bridge,
         static_tf,
+        static_tf_camera,
+        static_tf_camera_optical,
         robot_state_publisher,
         joint_state_publisher,
+        scene_markers,
         sam2_node,
         pose_node,
         rviz,
