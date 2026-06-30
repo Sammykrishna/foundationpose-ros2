@@ -17,8 +17,10 @@ Topics published:
   /pose_marker                 (visualization_msgs/Marker)  <- for RViz2
 """
 
-import sys
 import os
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
+import sys
 import numpy as np
 import cv2
 import trimesh
@@ -32,6 +34,10 @@ from visualization_msgs.msg import Marker # type: ignore
 from cv_bridge import CvBridge # type: ignore
 import message_filters # type: ignore
 from scipy.spatial.transform import Rotation
+import tf2_ros
+from tf2_ros import TransformException
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
 
 FOUNDATIONPOSE_PATH = '/home/samanth-krishna/projects/ros2_ws/src/foundationpose-ros2/FoundationPose'
 sys.path.insert(0, os.path.abspath(FOUNDATIONPOSE_PATH))
@@ -75,15 +81,25 @@ class FoundationPoseNode(Node):
         self.get_logger().info(f"  Weights: {weights_dir}")
 
         self.bridge = CvBridge()
+
+        # TF2 buffer/listener to get the camera-to-world transform dynamically,
+        # letting tf2 handle the optical frame convention correctly (REP-103)
+        # instead of hand-rolling rotation matrices.
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.camera_frame = 'realsense_d435i/link/color_camera_optical'
+        self.world_frame = 'world'
+
         self.camera_intrinsics = None
         self.estimator = None
         self.mesh = None
         self.is_initialized = False
+        self.consecutive_failures = 0
         self.frame_count = 0
 
         if mesh_path and os.path.exists(mesh_path):
             self.get_logger().info("Loading mesh...")
-            self.mesh = trimesh.load(mesh_path)
+            self.mesh = trimesh.load(mesh_path, force='mesh')
             self.get_logger().info(
                 f"Mesh loaded: {len(self.mesh.vertices)} vertices" # type: ignore
             )
@@ -152,6 +168,27 @@ class FoundationPoseNode(Node):
         self.get_logger().info("Loading FoundationPose model weights...")
 
         try:
+            # Force load as a proper mesh regardless of file format — this
+            # always returns a single Trimesh, never a Scene, which is what
+            # FoundationPose's reset_object() needs (it calls mesh.vertices).
+            mesh = trimesh.load(
+                self.get_parameter('mesh_path').value,
+                force='mesh'
+            )
+
+            self.get_logger().info(
+                f"Mesh for FoundationPose: {len(mesh.vertices)} vertices, " # type: ignore
+                f"{len(mesh.faces)} faces" # type: ignore
+            )
+
+            # FoundationPose needs sampled surface points + normals to render
+            # the object from different views during pose refinement.
+            model_pts, face_idx = trimesh.sample.sample_surface(mesh, 1000) # type: ignore
+            model_normals = mesh.face_normals[face_idx] # type: ignore
+            self.get_logger().info(
+                f"Mesh sampled: {len(model_pts)} points with normals"
+            )
+
             scorer = ScorePredictor()
             refiner = PoseRefinePredictor()
 
@@ -177,12 +214,17 @@ class FoundationPoseNode(Node):
                 scorer=scorer,
                 refiner=refiner,
                 debug=0,
-                debug_dir='/tmp/foundationpose_debug'
+                debug_dir='/tmp/foundationpose_debug',
+                model_pts=model_pts,
+                model_normals=model_normals,
+                mesh=mesh
             )
             self.get_logger().info("Model loaded successfully on GPU!")
 
         except Exception as e:
             self.get_logger().error(f"Failed to load model: {e}")
+            import traceback
+            self.get_logger().error(traceback.format_exc())
             self.get_logger().warn("Falling back to mock mode")
 
     def _camera_info_callback(self, msg: CameraInfo):
@@ -239,6 +281,9 @@ class FoundationPoseNode(Node):
             # publishes in millimeters, so you would need to divide by 1000.
 
             if not self.is_initialized:
+                import torch
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
                 if self.sam2_mask is not None:
                     mask = self.sam2_mask
                 else:
@@ -252,17 +297,30 @@ class FoundationPoseNode(Node):
                     rgb=rgb,
                     depth=depth,
                     ob_mask=mask,
-                    iteration=5
+                    iteration=2
                 )
 
-                if poses is not None and len(poses) > 0:
-                    self.is_initialized = True
-                    self.current_pose = poses[0]
-                    self.get_logger().info("Pose INITIALIZED successfully!")
-                    return self.current_pose
+                # register() can return a dummy 1D array instead of a real
+                # pose when the mask is invalid — validate shape before
+                # trusting it, otherwise is_initialized lies and track_one()
+                # blows up next frame with "Please init pose by register first".
+                poses_arr = np.array(poses) if poses is not None else None
+                if poses_arr is not None and poses_arr.ndim == 2 and poses_arr.shape == (4, 4):
+                    pose = poses_arr
+                elif poses_arr is not None and poses_arr.ndim == 3 and poses_arr.shape[0] > 0 and poses_arr.shape[1:] == (4, 4):
+                    pose = poses_arr[0]
                 else:
-                    self.get_logger().warn("Initialization failed, retrying...")
+                    self.get_logger().warn(
+                        f"Initialization failed — poses shape: "
+                        f"{poses_arr.shape if poses_arr is not None else None}, retrying..."
+                    )
                     return None
+
+                self.is_initialized = True
+                self.consecutive_failures = 0
+                self.current_pose = pose
+                self.get_logger().info("Pose INITIALIZED successfully!")
+                return self.current_pose
             else:
                 pose = self.estimator.track_one( # type: ignore
                     rgb=rgb,
@@ -270,11 +328,37 @@ class FoundationPoseNode(Node):
                     K=self.camera_intrinsics,
                     iteration=2
                 )
-                self.current_pose = pose
-                return pose
+                pose_arr = np.array(pose) if pose is not None else None
+                if pose_arr is None or pose_arr.ndim != 2 or pose_arr.shape != (4, 4):
+                    self.consecutive_failures += 1
+                    if self.consecutive_failures > 30:
+                        self.get_logger().warn(
+                            "Too many tracking failures, resetting to INITIALIZING"
+                        )
+                        self.is_initialized = False
+                        self.consecutive_failures = 0
+                    return None
+
+                self.current_pose = pose_arr
+                self.consecutive_failures = 0
+                return self.current_pose
 
         except Exception as e:
             self.get_logger().error(f"FoundationPose error: {e}")
+
+            # track_one() raises if it was never seeded by register() —
+            # e.g. an earlier register() call returned no poses but
+            # is_initialized still got set, or the estimator lost track.
+            # Reset to force a fresh register() instead of failing forever.
+            if self.is_initialized:
+                self.consecutive_failures += 1
+                if self.consecutive_failures > 30:
+                    self.get_logger().warn(
+                        "Too many tracking failures, resetting to INITIALIZING"
+                    )
+                    self.is_initialized = False
+                    self.consecutive_failures = 0
+
             return None
 
     def _generate_depth_mask(self, depth: np.ndarray) -> np.ndarray:
@@ -300,6 +384,37 @@ class FoundationPoseNode(Node):
 
     def _publish_pose(self, pose_matrix: np.ndarray, header):
         """Convert a 4x4 pose matrix to a ROS2 PoseStamped and publish it."""
+        # Guard against invalid pose shapes — FoundationPose's register()
+        # can return a 1D array when the mask is empty/too small.
+        pose_matrix = np.array(pose_matrix)
+        if pose_matrix.ndim != 2 or pose_matrix.shape != (4, 4):
+            self.get_logger().warn(
+                f"Invalid pose shape: {pose_matrix.shape}, skipping"
+            )
+            return
+
+        # FoundationPose returns object pose in CAMERA frame.
+        # Transform into WORLD frame via tf2 lookup (handles REP-103 frame conventions).
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                self.world_frame, self.camera_frame, rclpy.time.Time()
+            )
+        except TransformException as e:
+            self.get_logger().warn(f"TF lookup failed: {e}", throttle_duration_sec=2.0)
+            return
+
+        t = tf.transform.translation
+        q = tf.transform.rotation
+        T_world_cam = np.eye(4)
+        T_world_cam[:3, :3] = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
+        T_world_cam[:3, 3] = [t.x, t.y, t.z]
+        self.get_logger().info(
+            f"T_world_cam translation: {T_world_cam[:3,3]}, "
+            f"rotation 3rd col: {T_world_cam[:3,2]}, "
+            f"RAW cam-frame obj translation: {pose_matrix[:3,3]}"
+        )
+        pose_matrix = T_world_cam @ pose_matrix
+
         translation = pose_matrix[:3, 3]
         rotation_matrix = pose_matrix[:3, :3]
         rotation = Rotation.from_matrix(rotation_matrix)
