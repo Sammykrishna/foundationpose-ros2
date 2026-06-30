@@ -152,8 +152,10 @@ class SAM2Node(Node):
             sam2_model = build_sam2(
                 config_file=config_path,
                 ckpt_path=checkpoint,
-                device='cuda'
+                device='cpu'
             )
+            import torch
+            torch.cuda.empty_cache()
 
             # SAM2ImagePredictor is the API for single-image segmentation
             self.predictor = SAM2ImagePredictor(sam2_model)
@@ -188,6 +190,18 @@ class SAM2Node(Node):
             mask, confidence = self._run_sam2(color_image)
         else:
             mask, confidence = self._mock_mask(color_image)
+
+        if mask is not None:
+            # Sanity check — reject masks larger than 20% of image
+            # The sugar box is small, not the whole scene
+            total_pixels = mask.shape[0] * mask.shape[1]
+            mask_fraction = np.sum(mask > 0) / total_pixels
+            if mask_fraction > 0.05:
+                self.get_logger().warn(
+                    f"Mask too large ({mask_fraction*100:.1f}% of image) "
+                    f"— prompt point may be missing the object. Skipping."
+                )
+                mask = None
 
         if mask is not None:
             self._publish_mask(mask, self.latest_color_image.header)

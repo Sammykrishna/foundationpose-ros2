@@ -10,8 +10,8 @@ sam2_node:
     checkpoint_path: "/home/samanth-krishna/projects/ros2_ws/src/foundationpose-ros2/sam2/checkpoints/sam2.1_hiera_small.pt"
     model_config: "sam2.1_hiera_small"
     segmentation_rate_hz: 5.0
-    prompt_point_x: 0.5
-    prompt_point_y: 0.5
+    prompt_point_x: 0.50
+    prompt_point_y: 0.57
     confidence_threshold: 0.7
 
 grasp_executor:
