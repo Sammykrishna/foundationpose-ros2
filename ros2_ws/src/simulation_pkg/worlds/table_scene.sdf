@@ -12,6 +12,12 @@
       <real_time_factor>1.0</real_time_factor>
     </physics>
 
+    <scene>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>true</shadows>
+    </scene>
+
     <!-- Plugins that Gazebo Harmonic needs to simulate sensors and physics -->
     <plugin filename="gz-sim-physics-system"
             name="gz::sim::systems::Physics"/>
@@ -126,6 +132,7 @@
       The topic names match what ros_gz_bridge will forward to ROS2.
     -->
     <model name="realsense_d435i">
+      <static>true</static>
       <pose>0.8 -0.5 1.45 0 0.7854 1.5708</pose>
       <link name="link">
 
