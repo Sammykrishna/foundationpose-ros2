@@ -70,6 +70,17 @@ Visualization Manager:
         Value: /grasp_markers
       Value: true
 
+    - Class: rviz_default_plugins/MarkerArray
+      Name: SceneObjects
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /scene_markers
+      Value: true
+
     - Class: rviz_default_plugins/Image
       Name: SAM2Mask
       Enabled: true
