@@ -11,3 +11,4 @@ FoundationPose/weights_download/
 fpenv/
 sam2/checkpoints/
 results/benchmark_results_raw.json
+.vscode/
