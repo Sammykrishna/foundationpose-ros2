@@ -119,7 +119,35 @@ class GraspExecutorNode(Node):
         """Initialize MoveIt2 Python bindings and get the planning component."""
         try:
             self.get_logger().info("Initializing MoveIt2...")
-            self.moveit = MoveItPy(node_name="grasp_executor_moveit")
+
+            # MoveItPy needs planning pipeline config when run standalone —
+            # without it the node has no planning pipeline parameters and
+            # fails with "Failed to load planning pipelines from parameter server".
+            # These match what ur_moveit_config sets up.
+            self.moveit = MoveItPy(
+                node_name="grasp_executor_moveit",
+                config_dict={
+                    "planning_pipelines": {
+                        "pipeline_names": ["ompl"]
+                    },
+                    "ompl": {
+                        "planning_plugins": [
+                            "ompl_interface/OMPLPlanner"
+                        ],
+                        "request_adapters": [
+                            "default_planning_request_adapters/ResolveConstraintFrames",
+                            "default_planning_request_adapters/ValidateWorkspaceBounds",
+                            "default_planning_request_adapters/CheckStartStateBounds",
+                            "default_planning_request_adapters/CheckStartStateCollision"
+                        ],
+                        "response_adapters": [
+                            "default_planning_response_adapters/AddTimeOptimalParameterization",
+                            "default_planning_response_adapters/ValidateSolution",
+                            "default_planning_response_adapters/DisplayMotionPath"
+                        ]
+                    }
+                }
+            )
             self.arm = self.moveit.get_planning_component(self.planning_group)
             self.get_logger().info("MoveIt2 initialized successfully!")
         except Exception as e:

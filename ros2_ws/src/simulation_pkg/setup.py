@@ -25,5 +25,7 @@ setup(
     maintainer_email='samanthkrishna2001@gmail.com',
     description='Gazebo simulation for RGB-D pose estimation pipeline',
     license='MIT',
-    entry_points={'console_scripts': []},
+    entry_points={'console_scripts': [
+        'scene_markers_node = simulation_pkg.scene_markers_node:main',
+    ]},
 )
