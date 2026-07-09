@@ -105,23 +105,12 @@ def generate_launch_description():
         output='screen'
     )
 
-    static_tf = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='world_to_base_link',
-        arguments=['--x', '-0.1', '--y', '0', '--z', '0',
-                   '--roll', '0', '--pitch', '0', '--yaw', '0',
-                   '--frame-id', 'world',
-                   '--child-frame-id', 'base_link'],
-        output='screen'
-    )
-
     static_tf_camera = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='world_to_camera',
         arguments=['--x', '0.8', '--y', '-0.5', '--z', '1.45',
-                   '--roll', '0', '--pitch', '0.9195', '--yaw', '1.5708',
+                   '--roll', '0', '--pitch', '0.8858', '--yaw', '1.5708',
                    '--frame-id', 'world',
                    '--child-frame-id', 'realsense_d435i/link/color_camera'],
         output='screen'
@@ -141,11 +130,10 @@ def generate_launch_description():
     robot_description_content = Command([
         PathJoinSubstitution([FindExecutable(name='xacro')]),
         ' ',
-        '/opt/ros/jazzy/share/ur_description/urdf/ur.urdf.xacro',
-        ' ',
-        'ur_type:=ur5e',
-        ' ',
-        'name:=ur',
+        os.path.join(
+            get_package_share_directory('robot_control_pkg'),
+            'urdf', 'ur_positioned.urdf.xacro'
+        ),
         ' ',
         'use_fake_hardware:=true',
         ' ',
@@ -184,7 +172,6 @@ def generate_launch_description():
     return LaunchDescription([
         gazebo,
         bridge,
-        static_tf,
         static_tf_camera,
         static_tf_camera_optical,
         robot_state_publisher,
