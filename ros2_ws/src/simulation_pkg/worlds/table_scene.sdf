@@ -64,21 +64,61 @@
     -->
     <model name="table">
       <static>true</static>
-      <pose>0.8 0 0.375 0 0 0</pose>
+      <pose>0.8 0 0 0 0 0</pose>
       <link name="link">
-        <collision name="collision">
-          <geometry>
-            <box><size>1.2 0.8 0.75</size></box>
-          </geometry>
+        <!-- Tabletop slab: 5cm thick, top surface still at z=0.75 -->
+        <collision name="top_collision">
+          <pose>0 0 0.725 0 0 0</pose>
+          <geometry><box><size>1.2 0.8 0.05</size></box></geometry>
         </collision>
-        <visual name="visual">
-          <geometry>
-            <box><size>1.2 0.8 0.75</size></box>
-          </geometry>
+        <visual name="top_visual">
+          <pose>0 0 0.725 0 0 0</pose>
+          <geometry><box><size>1.2 0.8 0.05</size></box></geometry>
           <material>
             <ambient>0.9 0.9 0.85 1</ambient>
             <diffuse>0.9 0.9 0.85 1</diffuse>
           </material>
+        </visual>
+
+        <!-- Four legs, 5cm square, from floor to underside of slab (z=0.70) -->
+        <collision name="leg_fl_collision">
+          <pose>0.54 0.34 0.35 0 0 0</pose>
+          <geometry><box><size>0.05 0.05 0.70</size></box></geometry>
+        </collision>
+        <visual name="leg_fl_visual">
+          <pose>0.54 0.34 0.35 0 0 0</pose>
+          <geometry><box><size>0.05 0.05 0.70</size></box></geometry>
+          <material><ambient>0.7 0.7 0.65 1</ambient><diffuse>0.7 0.7 0.65 1</diffuse></material>
+        </visual>
+
+        <collision name="leg_fr_collision">
+          <pose>0.54 -0.34 0.35 0 0 0</pose>
+          <geometry><box><size>0.05 0.05 0.70</size></box></geometry>
+        </collision>
+        <visual name="leg_fr_visual">
+          <pose>0.54 -0.34 0.35 0 0 0</pose>
+          <geometry><box><size>0.05 0.05 0.70</size></box></geometry>
+          <material><ambient>0.7 0.7 0.65 1</ambient><diffuse>0.7 0.7 0.65 1</diffuse></material>
+        </visual>
+
+        <collision name="leg_bl_collision">
+          <pose>-0.54 0.34 0.35 0 0 0</pose>
+          <geometry><box><size>0.05 0.05 0.70</size></box></geometry>
+        </collision>
+        <visual name="leg_bl_visual">
+          <pose>-0.54 0.34 0.35 0 0 0</pose>
+          <geometry><box><size>0.05 0.05 0.70</size></box></geometry>
+          <material><ambient>0.7 0.7 0.65 1</ambient><diffuse>0.7 0.7 0.65 1</diffuse></material>
+        </visual>
+
+        <collision name="leg_br_collision">
+          <pose>-0.54 -0.34 0.35 0 0 0</pose>
+          <geometry><box><size>0.05 0.05 0.70</size></box></geometry>
+        </collision>
+        <visual name="leg_br_visual">
+          <pose>-0.54 -0.34 0.35 0 0 0</pose>
+          <geometry><box><size>0.05 0.05 0.70</size></box></geometry>
+          <material><ambient>0.7 0.7 0.65 1</ambient><diffuse>0.7 0.7 0.65 1</diffuse></material>
         </visual>
       </link>
     </model>
@@ -91,24 +131,24 @@
       We give it a distinct red color so SAM2 can segment it easily.
     -->
     <model name="sugar_box">
-      <pose>0.8 0.0 0.794 0 0 0.3</pose>
+      <pose>0.8 0.0 0.838 0 0 0.3</pose>
       <link name="link">
         <inertial>
           <mass>0.514</mass>
           <inertia>
-            <ixx>0.00114</ixx><ixy>0</ixy><ixz>0</ixz>
-            <iyy>0.00222</iyy><iyz>0</iyz>
-            <izz>0.00177</izz>
+            <ixx>0.001707</ixx><ixy>0</ixy><ixz>0</ixz>
+            <iyy>0.001432</iyy><iyz>0</iyz>
+            <izz>0.0004847</izz>
           </inertia>
         </inertial>
         <collision name="collision">
           <geometry>
-            <box><size>0.038 0.057 0.088</size></box>
+            <box><size>0.0495 0.0942 0.176</size></box>
           </geometry>
         </collision>
         <visual name="visual">
           <geometry>
-            <box><size>0.038 0.057 0.088</size></box>
+            <box><size>0.0495 0.0942 0.176</size></box>
           </geometry>
           <material>
             <ambient>0.8 0.2 0.1 1</ambient>
@@ -133,7 +173,7 @@
     -->
     <model name="realsense_d435i">
       <static>true</static>
-      <pose>0.8 -0.5 1.45 0 0.7854 1.5708</pose>
+      <pose>0.8 -0.5 1.45 0 0.8858 1.5708</pose>
       <link name="link">
 
         <visual name="visual">

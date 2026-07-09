@@ -43,39 +43,55 @@ class SceneMarkersNode(Node):
     def _publish_markers(self):
         markers = MarkerArray()
 
-        # ---- TABLE ----
-        # From our SDF: pose 0.8 0 0.375, size 1.2 x 0.8 x 0.75
-        # The SDF pose is the CENTER of the box
-        # so the table top surface is at z = 0.375 + 0.375 = 0.75m
-        table = Marker()
-        table.header.frame_id = 'world'
-        table.header.stamp = self.get_clock().now().to_msg()
-        table.ns = 'scene'
-        table.id = 0
-        table.type = Marker.CUBE
-        table.action = Marker.ADD
+        # ---- TABLE TOP ----
+        table_top = Marker()
+        table_top.header.frame_id = 'world'
+        table_top.header.stamp = self.get_clock().now().to_msg()
+        table_top.ns = 'scene'
+        table_top.id = 0
+        table_top.type = Marker.CUBE
+        table_top.action = Marker.ADD
+        table_top.pose.position.x = 0.8
+        table_top.pose.position.y = 0.0
+        table_top.pose.position.z = 0.725
+        table_top.pose.orientation.w = 1.0
+        table_top.scale.x = 1.2
+        table_top.scale.y = 0.8
+        table_top.scale.z = 0.05
+        table_top.color.r = 0.9
+        table_top.color.g = 0.9
+        table_top.color.b = 0.85
+        table_top.color.a = 0.9
+        table_top.lifetime.sec = 0
+        markers.markers.append(table_top)
 
-        # Position — center of table box
-        table.pose.position.x = 0.8
-        table.pose.position.y = 0.0
-        table.pose.position.z = 0.375
-        table.pose.orientation.w = 1.0  # no rotation
-
-        # Size — matches SDF exactly
-        table.scale.x = 1.2   # length
-        table.scale.y = 0.8   # width
-        table.scale.z = 0.75  # height
-
-        # Color — white/cream like our SDF table
-        table.color.r = 0.9
-        table.color.g = 0.9
-        table.color.b = 0.85
-        table.color.a = 0.9   # slightly transparent so we can see through
-
-        # Lifetime 0 means marker persists until deleted
-        table.lifetime.sec = 0
-
-        markers.markers.append(table)
+        leg_positions = [
+            (0.8 + 0.54, 0.34),
+            (0.8 + 0.54, -0.34),
+            (0.8 - 0.54, 0.34),
+            (0.8 - 0.54, -0.34),
+        ]
+        for i, (lx, ly) in enumerate(leg_positions):
+            leg = Marker()
+            leg.header.frame_id = 'world'
+            leg.header.stamp = self.get_clock().now().to_msg()
+            leg.ns = 'scene'
+            leg.id = 10 + i
+            leg.type = Marker.CUBE
+            leg.action = Marker.ADD
+            leg.pose.position.x = lx
+            leg.pose.position.y = ly
+            leg.pose.position.z = 0.35
+            leg.pose.orientation.w = 1.0
+            leg.scale.x = 0.05
+            leg.scale.y = 0.05
+            leg.scale.z = 0.70
+            leg.color.r = 0.7
+            leg.color.g = 0.7
+            leg.color.b = 0.65
+            leg.color.a = 0.9
+            leg.lifetime.sec = 0
+            markers.markers.append(leg)
 
         # ---- SUGAR BOX ----
         # From our SDF: pose 0.8 0.0 0.794, rotation 0.3 rad around Z
@@ -92,7 +108,7 @@ class SceneMarkersNode(Node):
         # Position — center of sugar box, sitting on table top
         sugar_box.pose.position.x = 0.8
         sugar_box.pose.position.y = 0.0
-        sugar_box.pose.position.z = 0.794
+        sugar_box.pose.position.z = 0.838
 
         # Rotation — 0.3 radians around Z axis (as set in SDF)
         # Convert to quaternion: q = [0, 0, sin(θ/2), cos(θ/2)]
@@ -103,9 +119,9 @@ class SceneMarkersNode(Node):
         sugar_box.pose.orientation.w = math.cos(angle / 2)
 
         # Real YCB sugar box dimensions in meters
-        sugar_box.scale.x = 0.038
-        sugar_box.scale.y = 0.057
-        sugar_box.scale.z = 0.088
+        sugar_box.scale.x = 0.0495
+        sugar_box.scale.y = 0.0942
+        sugar_box.scale.z = 0.176
 
         # Color — red like our SDF sugar box
         sugar_box.color.r = 0.8

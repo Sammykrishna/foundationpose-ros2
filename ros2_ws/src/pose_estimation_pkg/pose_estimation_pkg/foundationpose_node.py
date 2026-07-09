@@ -281,16 +281,17 @@ class FoundationPoseNode(Node):
             # publishes in millimeters, so you would need to divide by 1000.
 
             if not self.is_initialized:
+                if self.sam2_mask is None:
+                    self.get_logger().warn(
+                        "No SAM2 mask yet — skipping initialization this frame",
+                        throttle_duration_sec=2.0
+                    )
+                    return None
+
                 import torch
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
-                if self.sam2_mask is not None:
-                    mask = self.sam2_mask
-                else:
-                    self.get_logger().warn(
-                        "No SAM2 mask yet — falling back to depth threshold mask"
-                    )
-                    mask = self._generate_depth_mask(depth)
+                mask = self.sam2_mask
 
                 poses = self.estimator.register( # pyright: ignore[reportOptionalMemberAccess]
                     K=self.camera_intrinsics,
@@ -364,9 +365,10 @@ class FoundationPoseNode(Node):
     def _generate_depth_mask(self, depth: np.ndarray) -> np.ndarray:
         """
         Generate a binary mask for initialization based on depth heuristics.
-        Assumes camera is at z=1.45m, table top at z=0.75m, and object is ~0.088m tall.
+        Camera at (0.8, -0.5, 1.45), box center at (0.8, 0, 0.838), size 0.0495x0.0942x0.176.
+        Box spans roughly 0.70-0.88m straight-line distance from camera.
         """
-        mask = np.logical_and(depth > 0.5, depth < 0.72).astype(np.uint8) * 255
+        mask = np.logical_and(depth > 0.68, depth < 0.90).astype(np.uint8) * 255
 
         kernel = np.ones((5, 5), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
