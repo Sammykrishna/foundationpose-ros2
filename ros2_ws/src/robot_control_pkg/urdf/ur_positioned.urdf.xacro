@@ -26,4 +26,48 @@
     <origin xyz="0.8 -0.45 0.70" rpy="0 0 1.5708" />
   </xacro:ur_robot>
 
+  <!-- ================= Robotiq 2F-85 gripper ================= -->
+  <xacro:include filename="$(find robotiq_description)/urdf/ur_to_robotiq_adapter.urdf.xacro" />
+  <xacro:include filename="$(find robotiq_description)/urdf/robotiq_2f_85_macro.urdf.xacro" />
+
+  <!-- tool0 -> adapter plate -> gripper_mount_link -->
+  <xacro:ur_to_robotiq
+      prefix=""
+      connected_to="tool0"
+      rotation="0.0" />
+
+  <!-- gripper_mount_link -> robotiq_85_base_link -> fingers -->
+  <xacro:robotiq_gripper
+      name="RobotiqGripperHardwareInterface"
+      prefix=""
+      parent="gripper_mount_link"
+      use_fake_hardware="true"
+      include_ros2_control="false">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </xacro:robotiq_gripper>
+
+  <!-- Manual ros2_control block: only the real actuated joint gets a command
+       interface. Mimic joints (right knuckle, inner knuckles, finger tips)
+       derive their state from the <mimic> tag in the plain URDF joint below —
+       giving them their own command_interface is what crashed ros2_control_node. -->
+  <ros2_control name="RobotiqGripperHardwareInterface" type="system">
+    <hardware>
+      <plugin>mock_components/GenericSystem</plugin>
+      <param name="state_following_offset">0.0</param>
+    </hardware>
+    <joint name="robotiq_85_left_knuckle_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </ros2_control>
+
+  <!-- Functional grasp/TCP frame: gripper centerline, at measured fingertip depth -->
+  <link name="tcp_link" />
+  <joint name="tcp_joint" type="fixed">
+    <parent link="robotiq_85_base_link" />
+    <child link="tcp_link" />
+    <origin xyz="0 0 0.098" rpy="0 0 0" />
+  </joint>
+
 </robot>
