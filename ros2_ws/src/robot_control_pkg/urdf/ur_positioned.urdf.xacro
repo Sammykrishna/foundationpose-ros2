@@ -23,7 +23,7 @@
     safety_k_position="20"
     force_abs_paths="false"
     >
-    <origin xyz="0.8 -0.45 0.70" rpy="0 0 1.5708" />
+    <origin xyz="0.8 -0.45 0.752" rpy="0 0 1.5708" />
   </xacro:ur_robot>
 
   <!-- ================= Robotiq 2F-85 gripper ================= -->
