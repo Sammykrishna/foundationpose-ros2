@@ -32,6 +32,7 @@ setup(
             'grasp_executor = robot_control_pkg.grasp_executor:main',
             'trajectory_animator = robot_control_pkg.trajectory_animator:main',
             'moveit_bringup = robot_control_pkg.moveit_bringup:main',
+            'planning_scene_manager = robot_control_pkg.planning_scene_manager:main',
         ],
     },
 )
