@@ -1,9 +1,10 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess, TimerAction, SetEnvironmentVariable
+from launch.actions import ExecuteProcess, TimerAction, SetEnvironmentVariable, DeclareLaunchArgument
 from launch_ros.actions import Node
-from launch.substitutions import Command, FindExecutable, PathJoinSubstitution
+from launch.substitutions import Command, FindExecutable, PathJoinSubstitution, LaunchConfiguration
+from launch.conditions import IfCondition
 
 
 
@@ -28,6 +29,20 @@ def generate_launch_description():
 
     current_pythonpath = os.environ.get('PYTHONPATH', '')
     new_pythonpath = venv_site_packages + ':' + sam2_path + ':' + current_pythonpath
+
+    # false = running alongside demo.launch.py for the combined
+    # perception + MoveIt2 pipeline, which provides its own
+    # robot_state_publisher and joint_state_broadcaster (the latter
+    # driven by real ros2_control state, not a frozen 'zeros' pose).
+    # Running both here and there means two nodes fighting over
+    # /robot_description and /joint_states.
+    standalone_arg = DeclareLaunchArgument(
+        'standalone',
+        default_value='true',
+        description='true = publish robot_description/joint_states here '
+                     'for standalone perception debugging. false = skip '
+                     'both, since demo.launch.py provides them instead.'
+    )
 
     gazebo = ExecuteProcess(
         cmd=['gz', 'sim', '-s', '-r', '-v', '4', world_file],
@@ -147,7 +162,8 @@ def generate_launch_description():
         executable='robot_state_publisher',
         name='robot_state_publisher',
         output='screen',
-        parameters=[{'robot_description': robot_description_content, 'use_sim_time': False}]
+        parameters=[{'robot_description': robot_description_content, 'use_sim_time': False}],
+        condition=IfCondition(LaunchConfiguration('standalone'))
     )
 
     # zeros put the UR5e in an upright home configuration
@@ -166,10 +182,12 @@ def generate_launch_description():
                 'wrist_2_joint': 0.0,
                 'wrist_3_joint': 0.0,
             }
-        }]
+        }],
+        condition=IfCondition(LaunchConfiguration('standalone'))
     )
 
     return LaunchDescription([
+        standalone_arg,
         gazebo,
         bridge,
         static_tf_camera,
