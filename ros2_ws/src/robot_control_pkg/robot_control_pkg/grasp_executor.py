@@ -330,6 +330,7 @@ class GraspExecutorNode(Node):
             'robotiq_85_right_inner_knuckle_link',
             'robotiq_85_left_finger_tip_link',
             'robotiq_85_right_finger_tip_link',
+            'table',
         ]
         self.attached_object_pub.publish(attached)
         self.get_logger().info("Attach request sent for sugar_box")
