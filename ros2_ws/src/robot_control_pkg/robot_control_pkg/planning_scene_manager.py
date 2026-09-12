@@ -1,20 +1,7 @@
 #!/usr/bin/env python3
-"""
-Planning Scene Manager Node
-----------------------------
-Keeps MoveIt2's planning scene in sync with the physical scene:
-  - Table: added once as a static collision object (slab + 4 legs),
-    matching scene_markers_node.py / table_scene.sdf exactly.
-  - Sugar box: updated live from /object_pose, using the true
-    geometric center rather than FoundationPose's bottom-center
-    convention.
-
-Topics subscribed:
-  /object_pose       (geometry_msgs/PoseStamped)   from FoundationPose
-
-Topics published:
-  collision_object   (moveit_msgs/CollisionObject) to move_group
-"""
+"""ROS2 node that keeps MoveIt2's planning scene in sync with the physical
+scene: a static table collision object, and a sugar box collision object
+updated live from /object_pose at its true geometric center."""
 
 import rclpy
 from rclpy.node import Node
@@ -62,11 +49,9 @@ class PlanningSceneManagerNode(Node):
             String, '/grasp_status', self._grasp_status_callback, 10
         )
 
-        # Table is static — resend periodically so a late-starting
-        # move_group still picks it up
+        # resend the static table periodically so a late-starting move_group picks it up
         self.table_timer = self.create_timer(2.0, self._publish_table)
-        # Box — throttled, not every incoming pose message
-        self.box_timer = self.create_timer(0.2, self._publish_box)  # 5 Hz
+        self.box_timer = self.create_timer(0.2, self._publish_box)
 
         self.get_logger().info("Planning scene manager started")
 

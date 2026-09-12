@@ -1,24 +1,7 @@
 #!/usr/bin/env python3
-"""
-Benchmark Node
---------------
-Computes pose estimation accuracy by comparing FoundationPose output
-against Gazebo ground truth poses.
-
-Metrics computed:
-  ADD  — Average Distance of model points (primary metric)
-  ATE  — Absolute Translation Error (position only)
-  ARE  — Absolute Rotation Error in degrees (orientation only)
-
-Results are saved to a JSON file and printed as a summary table.
-
-Topics subscribed:
-  /object_pose          (geometry_msgs/PoseStamped) from FoundationPose
-  /world/sugar_box_pose (geometry_msgs/PoseStamped) ground truth from Gazebo
-
-Services used:
-  /world/table_scene/get_model_state  Gazebo model state service
-"""
+"""ROS2 node that computes pose estimation accuracy (ADD, ATE, ARE) by
+comparing FoundationPose output against Gazebo ground truth poses, and
+saves the results to a JSON file."""
 
 import os
 import json
@@ -60,7 +43,7 @@ class BenchmarkNode(Node):
 
         self.get_logger().info("Benchmark node starting...")
         self.get_logger().info(f"  Will collect {self.num_samples} samples")
-        self.get_logger().info(f"  Results → {self.results_dir}")
+        self.get_logger().info(f"  Results: {self.results_dir}")
 
         # Subsample 1000 points from the mesh for fast ADD computation
         self.mesh_points = None
@@ -105,10 +88,7 @@ class BenchmarkNode(Node):
         )
 
     def _build_ground_truth_pose(self) -> np.ndarray:
-        """
-        Build the ground truth 4x4 pose matrix for the sugar box.
-        Based on its placement in the SDF: x=0.8, y=0.0, z=0.794, rotated 0.3 rad around Z.
-        """
+        """Build the sugar box ground truth pose from its placement in the SDF world file."""
         r = Rotation.from_euler('z', 0.3)
         R = r.as_matrix()
 
@@ -141,12 +121,9 @@ class BenchmarkNode(Node):
         T_gt: np.ndarray,
         T_est: np.ndarray
     ) -> float:
-        """
-        Compute ADD — Average Distance of model points.
-        A lower ADD means the estimated pose is closer to ground truth.
-        """
+        """Compute ADD, the average distance of transformed model points from ground truth."""
         if self.mesh_points is None:
-            # Fallback to translation error if no mesh is available
+            # fallback to translation error if no mesh is available
             return np.linalg.norm(T_gt[:3, 3] - T_est[:3, 3])
 
         pts_gt = (T_gt[:3, :3] @ self.mesh_points.T).T + T_gt[:3, 3]
@@ -170,16 +147,13 @@ class BenchmarkNode(Node):
         T_gt: np.ndarray,
         T_est: np.ndarray
     ) -> float:
-        """
-        Compute Absolute Rotation Error (ARE) in degrees.
-        Uses the trace of the relative rotation matrix to find the angle.
-        """
+        """Compute ARE, the absolute rotation error in degrees, from the relative rotation trace."""
         R_gt = T_gt[:3, :3]
         R_est = T_est[:3, :3]
 
         R_rel = R_gt.T @ R_est
 
-        # Clamp trace to avoid numerical errors with arccos
+        # clamp trace to avoid numerical errors with arccos
         trace = np.clip((np.trace(R_rel) - 1) / 2, -1.0, 1.0)
         angle_rad = np.arccos(trace)
         
@@ -240,7 +214,7 @@ class BenchmarkNode(Node):
 
         summary = (
             f"\n{'='*50}\n"
-            f"  BENCHMARK — {len(self.estimated_poses)} frames\n"
+            f"  BENCHMARK: {len(self.estimated_poses)} frames\n"
             f"{'='*50}\n"
             f"  ADD mean:     {np.mean(adds)*100:.2f} cm\n"
             f"  ADD median:   {np.median(adds)*100:.2f} cm\n"

@@ -9,12 +9,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
 
-    # Use the official UR MoveIt2 launch — it handles:
-    # - Correct URDF with ros2_control tags
-    # - kinematics.yaml with KDL IK solver
-    # - SRDF with planning groups and home position
-    # - controller config
-    # - move_group with OMPL planning pipeline
+    # official UR MoveIt2 launch, handles URDF, kinematics, SRDF, controllers and move_group
     ur_moveit_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([

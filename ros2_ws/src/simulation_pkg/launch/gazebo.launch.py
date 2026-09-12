@@ -30,12 +30,7 @@ def generate_launch_description():
     current_pythonpath = os.environ.get('PYTHONPATH', '')
     new_pythonpath = venv_site_packages + ':' + sam2_path + ':' + current_pythonpath
 
-    # false = running alongside demo.launch.py for the combined
-    # perception + MoveIt2 pipeline, which provides its own
-    # robot_state_publisher and joint_state_broadcaster (the latter
-    # driven by real ros2_control state, not a frozen 'zeros' pose).
-    # Running both here and there means two nodes fighting over
-    # /robot_description and /joint_states.
+    # set false when demo.launch.py already provides robot_state_publisher and joint states
     standalone_arg = DeclareLaunchArgument(
         'standalone',
         default_value='true',

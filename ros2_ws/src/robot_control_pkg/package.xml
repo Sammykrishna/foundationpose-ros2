@@ -3,7 +3,7 @@
   <name>robot_control_pkg</name>
   <version>0.1.0</version>
   <description>
-    MoveIt2 grasp executor — receives 6-DoF object pose from
+    MoveIt2 grasp executor that receives 6-DoF object pose from
     FoundationPose and plans collision-free grasp trajectories
     for a UR5e robot arm
   </description>

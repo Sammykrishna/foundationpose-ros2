@@ -1,28 +1,8 @@
 #!/usr/bin/env python3
-"""
-Grasp Executor Node
--------------------
-Subscribes to /object_pose from FoundationPose, computes a grasp
-pose above the object, and uses MoveIt2 to plan and execute a
-collision-free trajectory for the UR5e + Robotiq 2F-85.
-
-Grasp strategy:
-  1. Move to HOME (safe starting pose)
-  2. Open gripper
-  3. Move to PRE-GRASP (above the object, looking down)
-  4. Move DOWN to GRASP, jaw axis aligned to the box's short side
-  5. Close gripper, attach box collision object to the gripper
-  6. LIFT (back to pre-grasp height)
-  7. Return HOME, detach box collision object
-
-Topics subscribed:
-  /object_pose              (geometry_msgs/PoseStamped)   from FoundationPose
-
-Topics published:
-  /grasp_status              (std_msgs/String)             state machine state
-  /grasp_target               (geometry_msgs/PoseStamped)   target grasp pose for RViz2
-  /attached_collision_object  (moveit_msgs/AttachedCollisionObject)
-"""
+"""ROS2 node that subscribes to /object_pose from FoundationPose, computes
+a grasp pose above the object, and uses MoveIt2 to plan and execute a
+collision-free pick and lift trajectory for the UR5e with a Robotiq 2F-85
+gripper."""
 
 import rclpy
 from rclpy.node import Node
@@ -69,8 +49,7 @@ class GraspExecutorNode(Node):
 
         self.declare_parameter('planning_group', 'ur_manipulator')
         self.declare_parameter('gripper_group', 'gripper')
-        # tcp_link, not tool0 — it already accounts for the adapter
-        # plate + gripper body's physical reach past the wrist flange.
+        # tcp_link accounts for the adapter plate and gripper reach, tool0 does not
         self.declare_parameter('end_effector_link', 'tcp_link')
         self.declare_parameter('pre_grasp_height', 0.15)
         self.declare_parameter('pose_stability_count', 10)
@@ -99,7 +78,7 @@ class GraspExecutorNode(Node):
         if MOVEIT_AVAILABLE:
             self._init_moveit()
         else:
-            self.get_logger().warn("Running in mock mode — will log planned poses")
+            self.get_logger().warn("Running in mock mode, will log planned poses")
 
         self.pose_sub = self.create_subscription(
             PoseStamped, '/object_pose', self._pose_callback, 10
@@ -118,10 +97,7 @@ class GraspExecutorNode(Node):
         self.get_logger().info("Grasp executor ready. Waiting for stable pose...")
 
     def _init_moveit(self):
-        """Initialize MoveIt2 Python bindings against the real generated
-        MoveIt2 config package — not a hand-rolled approximation of it,
-        so kinematics, controllers, and the gripper group are all loaded
-        correctly rather than missing."""
+        """Initialize MoveIt2 using the generated ur5e_robotiq_moveit_config package."""
         try:
             self.get_logger().info("Initializing MoveIt2...")
 
@@ -144,14 +120,8 @@ class GraspExecutorNode(Node):
             self.gripper = None
 
     def _allow_gripper_box_collision(self, allowed: bool = True):
-        """A real grasp target necessarily has the gripper body overlapping
-        the object's collision volume — that's what grasping means — so
-        OMPL reports zero valid states there unless we tell it this specific
-        overlap is expected. Temporarily (and, once granted, permanently —
-        the box becomes an attached object moments later anyway, so there's
-        no meaningful moment to revoke this) allow the gripper's touch links
-        to overlap sugar_box specifically, leaving every other collision
-        check (table, arm, everything else) untouched."""
+        """Allow the gripper's touch links to overlap sugar_box in the
+        collision checker, since a real grasp always has them touching."""
         touch_links = [
             'robotiq_85_base_link',
             'robotiq_85_left_knuckle_link',
@@ -191,10 +161,9 @@ class GraspExecutorNode(Node):
         return False
 
     def _compute_grasp_orientation(self, object_pose: Pose) -> Quaternion:
-        """Top-down grasp, with the gripper's jaw axis (local X) aligned
-        to the box's short axis (0.0495m), not its long axis (0.0942m,
-        within 2mm of the gripper's 0.094m open width — approaching along
-        that axis will fail unpredictably depending on the box's yaw)."""
+        """Compute a top-down grasp orientation with the gripper's jaw axis
+        aligned to the box's short side, since the long side is close to
+        the gripper's open width and would fail unpredictably."""
         box_quat_xyzw = [
             object_pose.orientation.x,
             object_pose.orientation.y,
@@ -203,9 +172,7 @@ class GraspExecutorNode(Node):
         ]
         box_rot = Rotation.from_quat(box_quat_xyzw)
 
-        # Project the box's local X-axis onto the world XY plane to get
-        # its yaw — more robust to small roll/pitch noise than pulling
-        # yaw straight out of euler angles.
+        # project the local X axis onto world XY to get yaw, robust to roll/pitch noise
         box_x_axis_world = box_rot.apply([1.0, 0.0, 0.0])
         box_yaw = np.arctan2(box_x_axis_world[1], box_x_axis_world[0])
 
@@ -217,8 +184,7 @@ class GraspExecutorNode(Node):
         return Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])
 
     def _compute_grasp_pose(self, object_pose: PoseStamped) -> PoseStamped:
-        """Grasp target = box's true geometric center. No extra flange
-        offset needed here — tcp_link already encodes that in the URDF."""
+        """Compute the grasp target at the box's true geometric center."""
         center = get_box_center_from_bottom_pose(
             object_pose.pose, SUGAR_BOX_HALF_HEIGHT
         )
@@ -307,14 +273,8 @@ class GraspExecutorNode(Node):
         return True
 
     def _attach_box(self):
-        """Move the sugar_box collision object from world to attached-on-
-        gripper, so lift planning treats it as part of the arm rather
-        than a static obstacle it's now holding. NOTE: attach/detach
-        semantics here are implemented per the documented
-        AttachedCollisionObject message pattern but not yet verified
-        against real behavior in this workspace — check RViz's Scene
-        Objects tab after this fires to confirm sugar_box actually moves
-        from the world list to attached, rather than duplicating."""
+        """Attach the sugar_box collision object to the gripper so lift
+        planning treats it as part of the arm instead of an obstacle."""
         attached = AttachedCollisionObject()
         attached.link_name = 'robotiq_85_base_link'
         attached.object.header.frame_id = 'robotiq_85_base_link'
@@ -336,9 +296,7 @@ class GraspExecutorNode(Node):
         self.get_logger().info("Attach request sent for sugar_box")
 
     def _detach_box(self):
-        """Detach — planning_scene_manager will keep republishing the
-        box's world collision object at its live /object_pose-derived
-        position afterward anyway, so this just hands control back."""
+        """Detach the box and hand its collision object back to planning_scene_manager."""
         attached = AttachedCollisionObject()
         attached.object.id = 'sugar_box'
         attached.object.operation = CollisionObject.REMOVE
@@ -346,16 +304,8 @@ class GraspExecutorNode(Node):
         self.get_logger().info("Detach request sent for sugar_box")
 
     def _diagnose_grasp_pose(self, grasp_pose: PoseStamped):
-        """Read-only diagnostic. Uses read_only(), not read_write() — the
-        previous version used read_write() and its IK solution got
-        committed back into the live shared robot state on exit, corrupting
-        every subsequent plan (that's what caused 'home' to suddenly show
-        a base_link/table collision on the very next attempt). read_only()
-        should not persist anything on exit, so this version is safe to
-        call without side effects. Also drops the earlier .contacts access,
-        which isn't convertible to a Python type on this pybind11 build and
-        crashed the node outright — a plain collision boolean is enough to
-        answer the actual question."""
+        """Log whether the grasp pose is reachable and collision-free.
+        Uses read_only() so the IK check does not affect the live scene."""
         from moveit.core.collision_detection import CollisionRequest, CollisionResult
 
         with self.psm.read_only() as scene:
@@ -365,8 +315,8 @@ class GraspExecutorNode(Node):
             )
             if not ik_success:
                 self.get_logger().error(
-                    "DIAGNOSTIC: IK FAILED for grasp pose — target is kinematically "
-                    "unreachable at this position/orientation, not a collision issue."
+                    "DIAGNOSTIC: IK failed for grasp pose, target is kinematically "
+                    "unreachable at this position and orientation."
                 )
                 return
 
@@ -377,19 +327,16 @@ class GraspExecutorNode(Node):
 
             if result.collision:
                 self.get_logger().error(
-                    "DIAGNOSTIC: IK succeeded but state IS in collision."
+                    "DIAGNOSTIC: IK succeeded but state is in collision."
                 )
             else:
                 self.get_logger().info(
-                    "DIAGNOSTIC: IK succeeded and state is collision-free — "
-                    "the OMPL failure may be a sampling/tolerance issue, not "
-                    "reachability or collision."
+                    "DIAGNOSTIC: IK succeeded and state is collision free, "
+                    "the OMPL failure may be a sampling or tolerance issue."
                 )
 
     def _moveit_execute_sequence(self, pre_grasp: PoseStamped, grasp: PoseStamped) -> bool:
-        # Grant this up front, not just before the descent — makes the
-        # sequence recoverable even if the robot starts already in contact
-        # with the box (e.g. left over from an interrupted previous run).
+        # grant this up front so the sequence recovers even if the robot starts in contact
         self._allow_gripper_box_collision(True)
 
         # Step 1: home
@@ -455,18 +402,18 @@ class GraspExecutorNode(Node):
         self.get_logger().info("Step 2: OPEN GRIPPER")
         self._publish_status(GraspState.PRE_GRASP)
         self.get_logger().info(
-            f"Step 3: PRE-GRASP → x={pre_grasp.pose.position.x:.3f}, "
+            f"Step 3: PRE-GRASP, x={pre_grasp.pose.position.x:.3f}, "
             f"y={pre_grasp.pose.position.y:.3f}, z={pre_grasp.pose.position.z:.3f}"
         )
         self._publish_status(GraspState.GRASPING)
         self.get_logger().info(
-            f"Step 4: GRASP → x={grasp.pose.position.x:.3f}, "
+            f"Step 4: GRASP, x={grasp.pose.position.x:.3f}, "
             f"y={grasp.pose.position.y:.3f}, z={grasp.pose.position.z:.3f}"
         )
         self._publish_status(GraspState.CLOSING_GRIPPER)
         self.get_logger().info("Step 5: CLOSE GRIPPER + ATTACH")
         self._publish_status(GraspState.LIFTING)
-        self.get_logger().info(f"Step 6: LIFT → z={pre_grasp.pose.position.z:.3f}")
+        self.get_logger().info(f"Step 6: LIFT, z={pre_grasp.pose.position.z:.3f}")
         self._publish_status(GraspState.RETURNING_HOME)
         self.get_logger().info("Step 7: RETURN HOME + DETACH")
         self.get_logger().info("=== MOCK GRASP COMPLETE ===")
@@ -525,7 +472,7 @@ class GraspExecutorNode(Node):
         self.grasp_in_progress = False
         self.pose_buffer.clear()
         self._publish_status(GraspState.IDLE)
-        self.get_logger().info("Reset to IDLE — ready for next grasp")
+        self.get_logger().info("Reset to IDLE, ready for next grasp")
 
 
 def main(args=None):

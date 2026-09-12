@@ -48,8 +48,7 @@ def generate_launch_description():
         'robot_description_semantic': robot_description_semantic_content
     }
 
-    # MoveIt2 move_group node — the core planning server
-    # This is what accepts planning requests and returns trajectories
+    # move_group is the core planning server, accepts requests and returns trajectories
     move_group_node = Node(
         package='moveit_ros_move_group',
         executable='move_group',
@@ -62,7 +61,7 @@ def generate_launch_description():
         ]
     )
 
-    # ros2_control node — manages the fake hardware controllers
+    # manages the fake hardware controllers
     ros2_control_node = Node(
         package='controller_manager',
         executable='ros2_control_node',
