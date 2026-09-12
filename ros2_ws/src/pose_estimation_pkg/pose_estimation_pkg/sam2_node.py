@@ -1,19 +1,7 @@
 #!/usr/bin/env python3
-"""
-SAM2 Segmentation Node
-----------------------
-Subscribes to the RGB camera topic, runs SAM2 to segment the target
-object, and publishes a binary mask for FoundationPose to use during
-pose initialization.
-
-Topics subscribed:
-  /camera/color/image_raw     (sensor_msgs/Image)
-
-Topics published:
-  /object_mask                (sensor_msgs/Image)  — binary mask
-  /object_mask/debug          (sensor_msgs/Image)  — color visualization
-  /sam2/status                (std_msgs/String)     — current state
-"""
+"""ROS2 node that runs SAM2 on the color image to segment the target
+object and publishes a binary mask for FoundationPose to use during
+pose initialization."""
 
 import sys
 import os
@@ -27,7 +15,6 @@ from sensor_msgs.msg import Image # type: ignore
 from std_msgs.msg import String # type: ignore
 from cv_bridge import CvBridge # type: ignore
 
-# Add SAM2 to Python path
 SAM2_PATH = os.path.join(
     os.path.dirname(__file__), '../../../../..', 'sam2'
 )
@@ -41,22 +28,17 @@ try:
     print("[SAM2] SAM2 imported successfully")
 except ImportError as e:
     print(f"[SAM2 WARN] SAM2 not importable: {e}")
-    print("[SAM2 WARN] Running in MOCK MODE — publishing full-image mask")
+    print("[SAM2 WARN] Running in mock mode, publishing full-image mask")
     SAM2_AVAILABLE = False
 
 
 class SAM2Node(Node):
-    """
-    ROS2 node that wraps SAM2 for automatic object segmentation.
+    """Wraps SAM2 for automatic object segmentation.
 
-    On each color frame it runs SAM2 with a center-point prompt and
-    publishes the resulting mask. The mask is consumed by the
-    FoundationPose node for pose initialization.
-
-    The node runs at a lower rate than 30Hz (configurable, default 5Hz)
-    because SAM2 is slower than FoundationPose tracking. We only need
-    a good mask for initialization — we don't need to re-segment every
-    single frame.
+    Runs SAM2 with a center-point prompt on each color frame and
+    publishes the resulting mask for the FoundationPose node to use
+    during pose initialization. Runs at a lower rate than the camera
+    since SAM2 is slower than FoundationPose tracking.
     """
 
     def __init__(self):
@@ -65,9 +47,8 @@ class SAM2Node(Node):
         self.declare_parameter('checkpoint_path', '')
         self.declare_parameter('model_config', 'sam2.1_hiera_small')
         self.declare_parameter('segmentation_rate_hz', 5.0)
-        
-        # The point prompt — where in the image to look for the object.
-        # Default is image center (0.5, 0.5) as normalized coordinates.
+
+        # prompt point is normalized image coordinates, default is the image center
         self.declare_parameter('prompt_point_x', 0.5)
         self.declare_parameter('prompt_point_y', 0.5)
         self.declare_parameter('confidence_threshold', 0.8)
@@ -105,8 +86,7 @@ class SAM2Node(Node):
             depth=1
         )
 
-        # We subscribe to color images and store the latest one.
-        # The actual segmentation runs on a timer to avoid blocking the executor.
+        # store the latest color image, segmentation runs on a timer to avoid blocking the executor
         self.color_sub = self.create_subscription(
             Image,
             '/camera/color/image_raw',
@@ -114,17 +94,10 @@ class SAM2Node(Node):
             qos
         )
 
-        # Binary mask — white where object is, black everywhere else
         self.mask_pub = self.create_publisher(Image, '/object_mask', 10)
-        
-        # Debug visualization — color image with mask overlay (for humans)
         self.debug_pub = self.create_publisher(Image, '/object_mask/debug', 10)
-        
-        # Status string for terminal feedback
         self.status_pub = self.create_publisher(String, '/sam2/status', 10)
 
-        # Timer fires at 'rate_hz' (default 5Hz). Each time it fires, 
-        # it segments whatever the latest image is.
         period = 1.0 / rate_hz
         self.timer = self.create_timer(period, self._segmentation_timer)
 
@@ -137,7 +110,6 @@ class SAM2Node(Node):
         try:
             self.get_logger().info("Loading SAM2 model onto GPU...")
 
-            # Map the short model name to the full config path
             config_map = {
                 'sam2.1_hiera_tiny':  'configs/sam2.1/sam2.1_hiera_t.yaml',
                 'sam2.1_hiera_small': 'configs/sam2.1/sam2.1_hiera_s.yaml',
@@ -157,7 +129,6 @@ class SAM2Node(Node):
             import torch
             torch.cuda.empty_cache()
 
-            # SAM2ImagePredictor is the API for single-image segmentation
             self.predictor = SAM2ImagePredictor(sam2_model)
 
             self.get_logger().info("SAM2 model loaded successfully on GPU!")
@@ -168,14 +139,11 @@ class SAM2Node(Node):
             self.predictor = None
 
     def _color_callback(self, msg: Image):
-        """
-        Store the latest image without processing. 
-        The timer will pick it up for segmentation.
-        """
+        """Store the latest image, the timer picks it up for segmentation."""
         self.latest_color_image = msg
 
     def _segmentation_timer(self):
-        """Main segmentation callback — runs at segmentation_rate_hz (5Hz)."""
+        """Segment the latest color image at segmentation_rate_hz."""
         if self.latest_color_image is None:
             return
 
@@ -192,14 +160,13 @@ class SAM2Node(Node):
             mask, confidence = self._mock_mask(color_image)
 
         if mask is not None:
-            # Sanity check — reject masks larger than 20% of image
-            # The sugar box is small, not the whole scene
+            # reject masks larger than 5% of the image, the sugar box is small
             total_pixels = mask.shape[0] * mask.shape[1]
             mask_fraction = np.sum(mask > 0) / total_pixels
             if mask_fraction > 0.05:
                 self.get_logger().warn(
-                    f"Mask too large ({mask_fraction*100:.1f}% of image) "
-                    f"— prompt point may be missing the object. Skipping."
+                    f"Mask too large ({mask_fraction*100:.1f}% of image), "
+                    f"prompt point may be missing the object, skipping"
                 )
                 mask = None
 
@@ -223,7 +190,6 @@ class SAM2Node(Node):
         try:
             h, w = image.shape[:2]
 
-            # Convert normalized prompt to pixel coordinates
             point_x = int(self.prompt_x * w)
             point_y = int(self.prompt_y * h)
 
@@ -231,7 +197,6 @@ class SAM2Node(Node):
             point_coords = np.array([[point_x, point_y]])
             point_labels = np.array([1])
 
-            # torch.no_grad() disables gradient tracking to save memory during inference
             with torch.no_grad():
                 self.predictor.set_image(image) # type: ignore
 
@@ -263,10 +228,7 @@ class SAM2Node(Node):
             return None, 0.0
 
     def _mock_mask(self, image: np.ndarray):
-        """
-        Generate a mock mask when SAM2 is not available.
-        Creates an ellipse in the center of the image.
-        """
+        """Generate an ellipse mask at the prompt point when SAM2 is not available."""
         h, w = image.shape[:2]
         mask = np.zeros((h, w), dtype=np.uint8)
 
@@ -277,28 +239,19 @@ class SAM2Node(Node):
         return mask, 1.0
 
     def _publish_mask(self, mask: np.ndarray, header):
-        """
-        Publish the binary mask as a ROS2 Image message.
-        encoding='mono8' (0 = background, 255 = object).
-        """
+        """Publish the binary mask as a ROS2 Image message."""
         mask_msg = self.bridge.cv2_to_imgmsg(mask, encoding='mono8')
         mask_msg.header = header
         self.mask_pub.publish(mask_msg)
 
     def _publish_debug(self, image: np.ndarray, mask: np.ndarray, header):
-        """
-        Publish a visualization showing the mask overlaid on the color image.
-        Overlays the mask in green with 50% transparency.
-        """
+        """Publish the color image with the mask overlaid in green for debugging."""
         debug_img = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
         overlay = debug_img.copy()
         overlay[mask > 0] = [0, 255, 0]
-        
-        # Blend original and overlay
         debug_img = cv2.addWeighted(debug_img, 0.6, overlay, 0.4, 0)
 
-        # Draw the prompt point as a red dot
         h, w = image.shape[:2]
         point_x = int(self.prompt_x * w)
         point_y = int(self.prompt_y * h)

@@ -1,10 +1,8 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="ur">
 
-  <!-- Wrapper around ur_macro.xacro that sets our own world->base_link
-       origin directly, instead of going through ur.urdf.xacro (which
-       hardcodes <origin xyz="0 0 0"/> and was fighting our own
-       static_transform_publisher node for authority over that transform). -->
+  <!-- sets the world to base_link origin directly instead of through ur.urdf.xacro,
+       which hardcodes it and fights our static_transform_publisher node -->
 
   <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro" />
 
@@ -26,7 +24,7 @@
     <origin xyz="0.8 -0.45 0.752" rpy="0 0 1.5708" />
   </xacro:ur_robot>
 
-  <!-- ================= Robotiq 2F-85 gripper ================= -->
+  <!-- Robotiq 2F-85 gripper -->
   <xacro:include filename="$(find robotiq_description)/urdf/ur_to_robotiq_adapter.urdf.xacro" />
   <xacro:include filename="$(find robotiq_description)/urdf/robotiq_2f_85_macro.urdf.xacro" />
 
@@ -46,10 +44,8 @@
     <origin xyz="0 0 0" rpy="0 0 0" />
   </xacro:robotiq_gripper>
 
-  <!-- Manual ros2_control block: only the real actuated joint gets a command
-       interface. Mimic joints (right knuckle, inner knuckles, finger tips)
-       derive their state from the <mimic> tag in the plain URDF joint below —
-       giving them their own command_interface is what crashed ros2_control_node. -->
+  <!-- only the real actuated joint gets a command interface, mimic joints derive
+       their state from the plain URDF joint's mimic tag below -->
   <ros2_control name="RobotiqGripperHardwareInterface" type="system">
     <hardware>
       <plugin>mock_components/GenericSystem</plugin>

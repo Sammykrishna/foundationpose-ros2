@@ -17,10 +17,7 @@ def generate_launch_description():
         'config', 'params.yaml'
     )
 
-    # 1. UR5e robot description — loads URDF into robot_state_publisher
-    # robot_state_publisher reads the URDF and broadcasts TF transforms
-    # for every link in the robot (shoulder, upper arm, forearm etc.)
-    # This is what makes the robot appear in RViz2
+    # loads the URDF into robot_state_publisher, which broadcasts TF for every link
     robot_description_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([
@@ -35,10 +32,7 @@ def generate_launch_description():
         }.items()
     )
 
-    # 2. MoveIt2 move_group node
-    # This is the core of MoveIt2 — it handles all planning requests
-    # It reads the robot URDF and SRDF to understand the robot's
-    # kinematic structure and planning groups
+    # move_group handles all planning requests using the robot's URDF and SRDF
     moveit_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([
@@ -54,7 +48,7 @@ def generate_launch_description():
         }.items()
     )
 
-    # 3. Grasp executor node — starts after MoveIt2 is ready
+    # starts after MoveIt2 is ready
     grasp_executor = TimerAction(
         period=10.0,  # give MoveIt2 time to fully initialize
         actions=[

@@ -124,11 +124,9 @@
     </model>
 
     <!--
-      TARGET OBJECT — Sugar Box (YCB object 004)
-      This is placed ON TOP of the table. Table top is at z=0.75m,
-      sugar box is ~0.088m tall, so center is at z = 0.75 + 0.044 = 0.794m.
-      This is the object FoundationPose will later estimate the pose of.
-      We give it a distinct red color so SAM2 can segment it easily.
+      Target object: sugar box (YCB object 004).
+      Sits on the table top at z=0.75m, center at z=0.794m.
+      Given a distinct red color so SAM2 can segment it easily.
     -->
     <model name="sugar_box">
       <pose>0.8 0.0 0.838 0 0 0.3</pose>
@@ -159,17 +157,9 @@
     </model>
 
     <!--
-      RGB-D CAMERA
-      Positioned 1.2m above the table, angled 45 degrees downward to look at
-      the object. This mimics how a wrist-mounted or overhead camera would see
-      a table scene.
-
-      It has TWO sensors:
-      1. camera (RGB) — publishes color images
-      2. depth_camera — publishes depth images (distance per pixel in meters)
-
-      Both run at 30Hz which is standard for RealSense cameras.
-      The topic names match what ros_gz_bridge will forward to ROS2.
+      RGB-D camera, angled downward at the table like a wrist-mounted camera.
+      Has an RGB sensor and a depth sensor, both at 30Hz, matching a RealSense.
+      Topic names match what ros_gz_bridge forwards to ROS2.
     -->
     <model name="realsense_d435i">
       <static>true</static>

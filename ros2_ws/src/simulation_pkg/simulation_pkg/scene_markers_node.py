@@ -1,16 +1,7 @@
 #!/usr/bin/env python3
-"""
-Scene Markers Node
-------------------
-Publishes RViz2 markers for the table and sugar box so they
-appear in RViz2 alongside the robot arm.
-
-This bridges the gap between what exists in Gazebo (physical
-simulation) and what RViz2 shows (sensor/planning data).
-
-Topics published:
-  /scene_markers  (visualization_msgs/MarkerArray)
-"""
+"""ROS2 node that publishes RViz2 markers for the table, sugar box and
+camera so they appear in RViz2 alongside the robot arm, since Gazebo's
+physical simulation is not visible there directly."""
 
 import rclpy
 from rclpy.node import Node
@@ -20,12 +11,7 @@ from std_msgs.msg import ColorRGBA
 
 
 class SceneMarkersNode(Node):
-    """
-    Publishes static markers for the table and sugar box.
-
-    These match exactly the positions we defined in table_scene.sdf
-    in Step 2, so RViz2 and Gazebo show the same scene layout.
-    """
+    """Publishes static markers matching the positions in table_scene.sdf."""
 
     def __init__(self):
         super().__init__('scene_markers_node')
@@ -34,16 +20,14 @@ class SceneMarkersNode(Node):
             MarkerArray, '/scene_markers', 10
         )
 
-        # Publish at 1Hz — these are static objects, no need for faster
-        # We still publish repeatedly so RViz2 can receive them if it
-        # starts after this node
+        # publish repeatedly so a late-starting RViz2 still receives these static markers
         self.timer = self.create_timer(1.0, self._publish_markers)
         self.get_logger().info("Scene markers node started")
 
     def _publish_markers(self):
         markers = MarkerArray()
 
-        # ---- TABLE TOP ----
+        # table top
         table_top = Marker()
         table_top.header.frame_id = 'world'
         table_top.header.stamp = self.get_clock().now().to_msg()
@@ -93,9 +77,7 @@ class SceneMarkersNode(Node):
             leg.lifetime.sec = 0
             markers.markers.append(leg)
 
-        # ---- SUGAR BOX ----
-        # From our SDF: pose 0.8 0.0 0.794, rotation 0.3 rad around Z
-        # Size: 0.038 x 0.057 x 0.088 (real YCB sugar box dimensions)
+        # sugar box
         import math
         sugar_box = Marker()
         sugar_box.header.frame_id = 'world'
@@ -105,13 +87,11 @@ class SceneMarkersNode(Node):
         sugar_box.type = Marker.CUBE
         sugar_box.action = Marker.ADD
 
-        # Position — center of sugar box, sitting on table top
         sugar_box.pose.position.x = 0.8
         sugar_box.pose.position.y = 0.0
         sugar_box.pose.position.z = 0.838
 
-        # Rotation — 0.3 radians around Z axis (as set in SDF)
-        # Convert to quaternion: q = [0, 0, sin(θ/2), cos(θ/2)]
+        # convert the 0.3 rad Z rotation to a quaternion: q = [0, 0, sin(a/2), cos(a/2)]
         angle = 0.3
         sugar_box.pose.orientation.x = 0.0
         sugar_box.pose.orientation.y = 0.0
@@ -123,7 +103,6 @@ class SceneMarkersNode(Node):
         sugar_box.scale.y = 0.0942
         sugar_box.scale.z = 0.176
 
-        # Color — red like our SDF sugar box
         sugar_box.color.r = 0.8
         sugar_box.color.g = 0.2
         sugar_box.color.b = 0.1
@@ -132,9 +111,7 @@ class SceneMarkersNode(Node):
         sugar_box.lifetime.sec = 0
         markers.markers.append(sugar_box)
 
-        # ---- CAMERA ----
-        # Show where the RealSense camera is in the scene
-        # From SDF: pose 0.8 -0.5 1.45
+        # camera
         camera = Marker()
         camera.header.frame_id = 'world'
         camera.header.stamp = self.get_clock().now().to_msg()
