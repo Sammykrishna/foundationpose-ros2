@@ -1,0 +1,21 @@
+# Initial positions for the sim_gazebo:=true (gz_ros2_control) path only.
+# A Gazebo-spawned joint's real physical angle starts at 0 regardless of
+# what this file says; gz_ros2_control's position_proportional_gain servo
+# then pulls it from 0 to whatever "initial_value" claims. All-zero here
+# seemed like the safe choice (nothing to snap to) but it settles into a
+# pose that intersects the table (checked: CheckStartStateCollision
+# rejected every plan with 6 contacts, forearm/wrist links vs. table) --
+# a fully-extended arm droops enough under gravity to clip the tabletop
+# right next to the base. Matching the SRDF's "home" pose here instead
+# (also used by the fake-hardware path) settles collision-free, and the
+# now-nonzero joint damping (see ur_positioned.urdf.xacro) keeps the pull
+# from 0 to these values a smooth settle instead of the wild oscillation
+# it caused before damping was added.
+initial_positions:
+  elbow_joint: 0
+  robotiq_85_left_knuckle_joint: 0
+  shoulder_lift_joint: -1.5708
+  shoulder_pan_joint: 0
+  wrist_1_joint: 0
+  wrist_2_joint: 0
+  wrist_3_joint: 0

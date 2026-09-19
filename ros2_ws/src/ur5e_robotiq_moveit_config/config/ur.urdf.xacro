@@ -2,13 +2,18 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="ur">
     <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
 
-    <!-- Import ur urdf file -->
+    <!-- Import ur urdf file. It declares its own sim_gazebo xacro:arg
+         (default false), which is what actually decides mock_components
+         vs gz_ros2_control for the gripper below and (via the macro call
+         below) the arm too. -->
     <xacro:include filename="$(find robot_control_pkg)/urdf/ur_positioned.urdf.xacro" />
 
     <!-- Import control_xacro -->
     <xacro:include filename="ur.ros2_control.xacro" />
 
 
-    <xacro:ur_ros2_control name="FakeSystem" initial_positions_file="$(arg initial_positions_file)"/>
+    <xacro:ur_ros2_control name="UR5eSystem"
+                            initial_positions_file="$(arg initial_positions_file)"
+                            sim_gazebo="$(arg sim_gazebo)"/>
 
 </robot>

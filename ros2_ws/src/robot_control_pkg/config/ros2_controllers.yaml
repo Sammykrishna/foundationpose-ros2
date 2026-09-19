@@ -1,0 +1,57 @@
+# Loaded directly by the gz_ros2_control Gazebo plugin (see the <gazebo>
+# block in urdf/ur_positioned.urdf.xacro) when sim_gazebo:=true, so
+# controller_manager comes up inside Gazebo instead of a standalone
+# ros2_control_node. Controller/joint names must stay in sync with
+# ur5e_robotiq_moveit_config/config/ros2_controllers.yaml, which serves the
+# same role for the fake-hardware (mock_components) path.
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # Hz
+
+    ur_manipulator_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    # Raw effort forwarder for the gripper -- gripper_effort_controller.py
+    # (a plain rclpy node, not a ros2_control controller) publishes target
+    # torques here and does the actual open/close/stall-detection logic;
+    # this controller's only job is handing that number to the hardware
+    # interface each cycle. Replaces position_controllers/GripperActionController,
+    # which drove the knuckle joint to a fixed position and couldn't
+    # reliably turn that into real squeeze force against the box.
+    #
+    # Name MUST stay "gripper_controller": MoveIt's moveit_controllers.yaml
+    # (ur5e_robotiq_moveit_config) checks controller_manager/list_controllers
+    # for an ACTIVE controller with exactly this name before it will dispatch
+    # a gripper trajectory at all. Renaming this (it was
+    # "gripper_effort_forward" during development) made MoveIt silently skip
+    # sending the goal instead of erroring -- grasp_executor logged
+    # "Closing gripper..." and moved straight on to "Attach request sent"
+    # with the gripper never actually commanded, no error anywhere.
+    gripper_controller:
+      type: forward_command_controller/ForwardCommandController
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+ur_manipulator_controller:
+  ros__parameters:
+    joints:
+      - shoulder_pan_joint
+      - shoulder_lift_joint
+      - elbow_joint
+      - wrist_1_joint
+      - wrist_2_joint
+      - wrist_3_joint
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    allow_nonzero_velocity_at_trajectory_end: true
+
+gripper_controller:
+  ros__parameters:
+    joints:
+      - robotiq_85_left_knuckle_joint
+      - robotiq_85_right_knuckle_joint
+    interface_name: effort

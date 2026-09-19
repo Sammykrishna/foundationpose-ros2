@@ -33,6 +33,8 @@ setup(
             'trajectory_animator = robot_control_pkg.trajectory_animator:main',
             'moveit_bringup = robot_control_pkg.moveit_bringup:main',
             'planning_scene_manager = robot_control_pkg.planning_scene_manager:main',
+            'manipulation_trial_runner = robot_control_pkg.manipulation_trial_runner:main',
+            'gripper_effort_controller = robot_control_pkg.gripper_effort_controller:main',
         ],
     },
 )

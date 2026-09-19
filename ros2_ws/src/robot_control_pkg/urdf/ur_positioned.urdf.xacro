@@ -6,6 +6,12 @@
 
   <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro" />
 
+  <!-- true = actuate through Gazebo physics (gz_ros2_control), the arm and
+       gripper actually push against the simulated box instead of MoveIt's
+       planning scene alone deciding what's "attached". false (default) =
+       mock_components/GenericSystem, instant fake actuation, no physics. -->
+  <xacro:arg name="sim_gazebo" default="false" />
+
   <link name="world" />
 
   <xacro:ur_robot
@@ -48,15 +54,72 @@
        their state from the plain URDF joint's mimic tag below -->
   <ros2_control name="RobotiqGripperHardwareInterface" type="system">
     <hardware>
-      <plugin>mock_components/GenericSystem</plugin>
-      <param name="state_following_offset">0.0</param>
+      <xacro:if value="$(arg sim_gazebo)">
+        <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+      </xacro:if>
+      <xacro:unless value="$(arg sim_gazebo)">
+        <plugin>mock_components/GenericSystem</plugin>
+        <param name="state_following_offset">0.0</param>
+      </xacro:unless>
     </hardware>
     <joint name="robotiq_85_left_knuckle_joint">
-      <command_interface name="position"/>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
+      <!-- sim_gazebo: effort command, driven by gripper_effort_controller's
+           closed-loop force logic (command a modest torque and let real
+           contact stop it, instead of driving to a fixed position that a
+           velocity-position servo can't reliably turn into real squeeze
+           force; see gripper_effort_controller.py for why. Position
+           state is still reported for MoveIt/RViz; effort state feeds the
+           stall/contact detection.
+           Fake hardware: unchanged, position-commanded as before. -->
+      <xacro:if value="$(arg sim_gazebo)">
+        <command_interface name="effort"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </xacro:if>
+      <xacro:unless value="$(arg sim_gazebo)">
+        <command_interface name="position"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </xacro:unless>
     </joint>
+    <!-- dartsim doesn't enforce the URDF mimic, so the right knuckle hung
+         under gravity; drive it with its own (sign-mirrored) effort. -->
+    <xacro:if value="$(arg sim_gazebo)">
+      <joint name="robotiq_85_right_knuckle_joint">
+        <command_interface name="effort"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+    </xacro:if>
   </ros2_control>
+
+  <!-- Single gz_ros2_control system plugin for the whole robot: it picks up
+       every <ros2_control> block above (arm's, from ur.ros2_control.xacro,
+       and the gripper's above) under one controller_manager inside Gazebo. -->
+  <xacro:if value="$(arg sim_gazebo)">
+    <gazebo>
+      <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+        <parameters>$(find robot_control_pkg)/config/ros2_controllers.yaml</parameters>
+      </plugin>
+    </gazebo>
+
+    <!-- Gazebo-native joint spawn angle, independent of ros2_control
+         entirely: without this every arm joint physically spawns at 0
+         (fully extended) regardless of the ros2_control "initial_value"
+         claim, and gz_ros2_control's position-interface servo proved too
+         weak/slow against gravity to actually reach the SRDF "home" pose
+         from there before MoveIt's first plan: it settled partway,
+         drooped enough to intersect the table, and CheckStartStateCollision
+         rejected every plan. Spawning already at home sidesteps needing
+         that servo to do any work at all before the first real trajectory. -->
+    <gazebo reference="shoulder_lift_joint">
+      <axis>
+        <initial_position>-1.5708</initial_position>
+      </axis>
+    </gazebo>
+  </xacro:if>
 
   <!-- Functional grasp/TCP frame: gripper centerline, at measured fingertip depth -->
   <link name="tcp_link" />

@@ -18,6 +18,17 @@ joint_limits:
     max_velocity: 0.5
     has_acceleration_limits: true
     max_acceleration: 2.0
+    # CheckStartStateBounds has no tolerance at all (confirmed in source:
+    # it only "fixes" continuous-joint angle wrapping, never a bounded
+    # position violation, however tiny). Under gz_ros2_control physics
+    # this joint's real reported position sits at ~-1e-13 when resting at
+    # its 0.0 lower limit -- floating-point noise from the simulated
+    # servo, not a real position -- which without slack here gets rejected
+    # outright and aborts every plan. This overrides the URDF's hardware
+    # limit for MoveIt's planning model only; it doesn't touch ros2_control.
+    has_position_limits: true
+    min_position: -0.01
+    max_position: 0.81
   shoulder_lift_joint:
     has_velocity_limits: true
     max_velocity: 3.1415926535897931

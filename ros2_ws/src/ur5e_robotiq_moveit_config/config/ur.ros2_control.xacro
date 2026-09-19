@@ -1,12 +1,31 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
-    <xacro:macro name="ur_ros2_control" params="name initial_positions_file">
+    <xacro:macro name="ur_ros2_control" params="name initial_positions_file sim_gazebo:=false">
         <xacro:property name="initial_positions" value="${xacro.load_yaml(initial_positions_file)['initial_positions']}"/>
 
         <ros2_control name="${name}" type="system">
             <hardware>
-                <!-- By default, set up controllers for simulation. This won't work on real hardware -->
-                <plugin>mock_components/GenericSystem</plugin>
+                <!-- sim_gazebo=false (default): mock_components, instant fake
+                     actuation, no physics, won't work on real hardware either.
+                     sim_gazebo=true: actuated through Gazebo physics via the
+                     gz_ros2_control plugin declared in ur_positioned.urdf.xacro. -->
+                <xacro:if value="${sim_gazebo}">
+                    <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+                    <!-- gz_ros2_control's position command interface is a
+                         VELOCITY servo, not a torque PID:
+                         joint_velocity = gain * position_error * update_rate
+                         (100 Hz here). This is a direct child element of
+                         <hardware>, NOT a <param name="..."> (that syntax
+                         is specific to mock_components/GenericSystem):
+                         using <param> here was silently ignored, so every
+                         gain value tried (including absurdly large ones)
+                         produced identical behavior: the plugin was always
+                         falling back to its own default (0.1) regardless. -->
+                    <position_proportional_gain>5.0</position_proportional_gain>
+                </xacro:if>
+                <xacro:unless value="${sim_gazebo}">
+                    <plugin>mock_components/GenericSystem</plugin>
+                </xacro:unless>
             </hardware>
             <joint name="shoulder_pan_joint">
                 <command_interface name="position"/>
