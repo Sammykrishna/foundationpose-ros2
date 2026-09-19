@@ -119,8 +119,8 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='world_to_camera',
-        arguments=['--x', '0.8', '--y', '-0.5', '--z', '1.45',
-                   '--roll', '0', '--pitch', '0.8858', '--yaw', '1.5708',
+        arguments=['--x', '0.8', '--y', '0.5', '--z', '1.45',
+                   '--roll', '0', '--pitch', '0.8858', '--yaw', '-1.5708',
                    '--frame-id', 'world',
                    '--child-frame-id', 'realsense_d435i/link/color_camera'],
         output='screen'

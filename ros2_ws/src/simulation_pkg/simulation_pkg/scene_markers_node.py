@@ -121,7 +121,7 @@ class SceneMarkersNode(Node):
         camera.action = Marker.ADD
 
         camera.pose.position.x = 0.8
-        camera.pose.position.y = -0.5
+        camera.pose.position.y = 0.5
         camera.pose.position.z = 1.45
         camera.pose.orientation.w = 1.0
 
