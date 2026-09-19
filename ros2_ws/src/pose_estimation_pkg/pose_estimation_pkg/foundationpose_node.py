@@ -317,7 +317,8 @@ class FoundationPoseNode(Node):
                 return self.current_pose
 
         except Exception as e:
-            self.get_logger().error(f"FoundationPose error: {e}")
+            import traceback
+            self.get_logger().error(f"FoundationPose error: {e!r}\n{traceback.format_exc()}")
 
             # reset to force a fresh register() call if tracking fails repeatedly
             if self.is_initialized:
