@@ -26,6 +26,13 @@ from moveit_configs_utils import MoveItConfigsBuilder
 from moveit_configs_utils.launches import generate_move_group_launch
 
 
+# The pads are rigid on the finger, so they tilt with the knuckle when it
+# closes (the real gripper keeps them parallel with a four-bar linkage).
+# Pre-rotating each pad by the knuckle angle it reaches on this box makes it
+# vertical at the grasp, so it grips on its face rather than an edge.
+PAD_CLOSED_TILT = 0.19
+
+
 def _robot_state_publisher_action(context, *args, **kwargs):
     """Build robot_description with a real subprocess call (not a launch
     Command substitution) so the raw URDF text can be patched before
@@ -79,7 +86,7 @@ def _robot_state_publisher_action(context, *args, **kwargs):
         z = 0.04718515 + 0.0225
         collision = (
             '<collision>'
-            f'<origin rpy="0 0 0" xyz="{x} 0.0 {z}"/>'
+            f'<origin rpy="0 {sx * PAD_CLOSED_TILT} 0" xyz="{x} 0.0 {z}"/>'
             '<geometry><box size="0.0312 0.0270 0.0570"/></geometry>'
             '</collision>'
         )
@@ -117,6 +124,22 @@ def _robot_state_publisher_action(context, *args, **kwargs):
             patched_urdf, count=1)
         if n != 1:
             raise RuntimeError(f"joint {jn} not found for damping")
+
+    # Contact sensors on the box showed that the robot's mesh collisions ARE
+    # active in Gazebo and misbehave: the passive inner-knuckle meshes droop
+    # onto the box top, the gripper-base and fingertip meshes touch the box
+    # from the pre-grasp pose on, and together they wedge on the box's top
+    # edges and stop the descent ~8 cm short. Keep only the two fingertip pad
+    # boxes as Gazebo collisions; MoveIt's own model keeps the arm off the table.
+    def _keep_pads_only(m):
+        return m.group(0) if 'size="0.0312 0.0270 0.0570"' in m.group(0) else ''
+    patched_urdf = re.sub(r'<collision[^>]*>.*?</collision>', _keep_pads_only,
+                          patched_urdf, flags=re.S)
+
+    friction = ''.join(
+        f'<gazebo reference="robotiq_85_{side}_knuckle_link">'
+        '<mu1>3.0</mu1><mu2>3.0</mu2></gazebo>' for side in ('left', 'right'))
+    patched_urdf = patched_urdf.replace('</robot>', friction + '</robot>')
 
     robot_description = {
         'robot_description': ParameterValue(patched_urdf, value_type=str)
@@ -310,7 +333,20 @@ def generate_launch_description():
         name='foundationpose_node', parameters=[params_file], output='screen',
         additional_env=pyenv, condition=IfCondition(perception))])
 
+    # mission:=true also starts the planning scene manager and the grasp
+    # executor, which then runs the whole pick, place, re-detect, return demo.
+    mission = LaunchConfiguration('mission')
+    scene_manager = TimerAction(period=30.0, actions=[Node(
+        package='robot_control_pkg', executable='planning_scene_manager',
+        output='screen', condition=IfCondition(mission))])
+    executor = TimerAction(period=32.0, actions=[Node(
+        package='robot_control_pkg', executable='grasp_executor', output='screen',
+        parameters=[{'sim_gazebo': True, 'mission': True, 'single_shot': True}],
+        condition=IfCondition(mission))])
+
     ld = LaunchDescription([
+        DeclareLaunchArgument('mission', default_value='false'),
+        scene_manager, executor,
         DeclareLaunchArgument('perception', default_value='false'),
         bridge, static_tf_camera, static_tf_optical, scene_markers,
         sam2_node, pose_node,

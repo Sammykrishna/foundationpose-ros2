@@ -5,13 +5,16 @@ pose initialization."""
 
 import sys
 import os
+import time
 import numpy as np
 import cv2
 import rclpy # type: ignore
 from rclpy.node import Node # type: ignore
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy # type: ignore
 
-from sensor_msgs.msg import Image # type: ignore
+from sensor_msgs.msg import Image, CameraInfo # type: ignore
+from geometry_msgs.msg import PoseStamped # type: ignore
+from tf2_ros import Buffer, TransformListener # type: ignore
 from std_msgs.msg import String # type: ignore
 from cv_bridge import CvBridge # type: ignore
 
@@ -94,6 +97,19 @@ class SAM2Node(Node):
             qos
         )
 
+        # Follow the object: after it has been moved, prompt SAM2 where
+        # FoundationPose last tracked it instead of the fixed start pixel.
+        self.declare_parameter('prompt_from_pose', True)
+        self.prompt_from_pose = self.get_parameter('prompt_from_pose').value
+        self.box_center_offset_z = 0.088  # pose is the box's bottom face
+        self.camera_K = None
+        self.latest_obj_pose = None
+        self.latest_obj_pose_time = 0.0
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.create_subscription(CameraInfo, '/camera/color/camera_info', self._info_cb, qos)
+        self.create_subscription(PoseStamped, '/object_pose', self._pose_cb, 10)
+
         self.mask_pub = self.create_publisher(Image, '/object_mask', 10)
         self.debug_pub = self.create_publisher(Image, '/object_mask/debug', 10)
         self.status_pub = self.create_publisher(String, '/sam2/status', 10)
@@ -137,6 +153,70 @@ class SAM2Node(Node):
             self.get_logger().error(f"Failed to load SAM2: {e}")
             self.get_logger().warn("Falling back to mock mode")
             self.predictor = None
+
+    def _info_cb(self, msg: CameraInfo):
+        if self.camera_K is None:
+            self.camera_K = np.array(msg.k).reshape(3, 3)
+
+    def _pose_cb(self, msg: PoseStamped):
+        p = msg.pose.position
+        # only trust poses that are on the table; FoundationPose can emit
+        # garbage while initializing, and while the box is carried it is high
+        if 0.5 < p.x < 1.1 and -0.35 < p.y < 0.45 and 0.70 < p.z < 0.82:
+            self.latest_obj_pose = msg
+            self.latest_obj_pose_time = time.monotonic()
+
+    def _color_cue(self, image):
+        """Centroid (u, v) of the largest orange blob in the RGB image -- a
+        cheap, pose-independent hint of where the box is, used only to place
+        SAM2's point prompt (SAM2 still does the actual segmentation)."""
+        try:
+            hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+            h_, s_, v_ = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+            m = (((h_ <= 18) | (h_ >= 172)) & (s_ > 110) & (v_ > 70)).astype(np.uint8)
+            n, _, stats, cents = cv2.connectedComponentsWithStats(m, connectivity=8)
+            best, area = None, 0
+            for i in range(1, n):
+                a = stats[i, cv2.CC_STAT_AREA]
+                if 250 < a < 25000 and a > area:
+                    best, area = i, a
+            if best is not None:
+                return int(cents[best][0]), int(cents[best][1])
+        except Exception:
+            pass
+        return None
+
+    def _current_prompt(self, w: int, h: int, image=None):
+        """Pixel to prompt SAM2 at: an image cue for the object if one is
+        visible, else the tracked object's projection if we have a recent
+        on-table pose, else the configured start point."""
+        if image is not None:
+            cue = self._color_cue(image)
+            if cue is not None:
+                return cue
+        if (self.prompt_from_pose and self.camera_K is not None
+                and self.latest_obj_pose is not None
+                and time.monotonic() - self.latest_obj_pose_time < 5.0):
+            try:
+                p = self.latest_obj_pose.pose.position
+                t = self.tf_buffer.lookup_transform(
+                    'realsense_d435i/link/color_camera_optical',
+                    self.latest_obj_pose.header.frame_id or 'world',
+                    rclpy.time.Time())
+                from scipy.spatial.transform import Rotation
+                q = t.transform.rotation
+                R = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
+                tr = t.transform.translation
+                pc = R @ np.array([p.x, p.y, p.z + self.box_center_offset_z]) \
+                    + np.array([tr.x, tr.y, tr.z])
+                if pc[2] > 0.1:
+                    u = self.camera_K[0, 0] * pc[0] / pc[2] + self.camera_K[0, 2]
+                    v = self.camera_K[1, 1] * pc[1] / pc[2] + self.camera_K[1, 2]
+                    if 0 <= u < w and 0 <= v < h:
+                        return int(u), int(v)
+            except Exception:
+                pass
+        return int(self.prompt_x * w), int(self.prompt_y * h)
 
     def _color_callback(self, msg: Image):
         """Store the latest image, the timer picks it up for segmentation."""
@@ -190,8 +270,8 @@ class SAM2Node(Node):
         try:
             h, w = image.shape[:2]
 
-            point_x = int(self.prompt_x * w)
-            point_y = int(self.prompt_y * h)
+            point_x, point_y = self._current_prompt(w, h, image)
+            self.last_prompt = (point_x, point_y)
 
             # point_labels: 1 = foreground, 0 = background
             point_coords = np.array([[point_x, point_y]])
@@ -253,8 +333,7 @@ class SAM2Node(Node):
         debug_img = cv2.addWeighted(debug_img, 0.6, overlay, 0.4, 0)
 
         h, w = image.shape[:2]
-        point_x = int(self.prompt_x * w)
-        point_y = int(self.prompt_y * h)
+        point_x, point_y = getattr(self, 'last_prompt', (int(self.prompt_x * w), int(self.prompt_y * h)))
         cv2.circle(debug_img, (point_x, point_y), 8, (0, 0, 255), -1)
         cv2.circle(debug_img, (point_x, point_y), 8, (255, 255, 255), 2)
 

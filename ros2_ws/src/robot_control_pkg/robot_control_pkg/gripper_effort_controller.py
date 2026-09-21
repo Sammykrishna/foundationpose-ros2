@@ -52,7 +52,7 @@ class GripperEffortController(Node):
         self.declare_parameter('position_tolerance', 0.015)
         self.declare_parameter('close_effort', 6.0)
         self.declare_parameter('open_effort', -4.0)
-        self.declare_parameter('hold_effort', 4.5)
+        self.declare_parameter('hold_effort', 8.0)
         self.declare_parameter('rest_open_effort', -1.0)
         self.declare_parameter('stall_velocity_threshold', 0.01)
         self.declare_parameter('stall_dwell_sec', 0.3)

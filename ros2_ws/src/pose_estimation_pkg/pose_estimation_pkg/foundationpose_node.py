@@ -15,6 +15,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy # type: ignor
 
 from sensor_msgs.msg import Image, CameraInfo # type: ignore
 from geometry_msgs.msg import PoseStamped # type: ignore
+from std_msgs.msg import Empty # type: ignore
 from visualization_msgs.msg import Marker # type: ignore
 from cv_bridge import CvBridge # type: ignore
 import message_filters # type: ignore
@@ -131,6 +132,11 @@ class FoundationPoseNode(Node):
         )
         self.get_logger().info("Subscribed to /object_mask from SAM2 node")
 
+        # Lets the robot ask for a fresh registration (e.g. once the object
+        # has been put down and the arm is out of the camera's view) instead
+        # of trusting a tracker that followed it through the whole carry.
+        self.create_subscription(Empty, '/foundationpose/reinit', self._reinit_cb, 10)
+
         self.pose_pub = self.create_publisher(
             PoseStamped, '/object_pose', 10
         )
@@ -212,6 +218,11 @@ class FoundationPoseNode(Node):
                 f"  fx={K[0,0]:.1f}, fy={K[1,1]:.1f}\n"
                 f"  cx={K[0,2]:.1f}, cy={K[1,2]:.1f}"
             )
+
+    def _reinit_cb(self, _msg):
+        self.get_logger().info("Re-initialization requested: registering the object afresh")
+        self.is_initialized = False
+        self.consecutive_failures = 0
 
     def _mask_callback(self, msg: Image):
         """Cache the latest segmentation mask from the SAM2 node."""

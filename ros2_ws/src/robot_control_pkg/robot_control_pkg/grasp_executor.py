@@ -17,8 +17,10 @@ from tf2_ros import Buffer, TransformListener
 import numpy as np
 
 from geometry_msgs.msg import PoseStamped, Pose, Quaternion
-from std_msgs.msg import String
+from std_msgs.msg import String, Empty
 from sensor_msgs.msg import JointState
+from trajectory_msgs.msg import JointTrajectoryPoint
+from builtin_interfaces.msg import Duration as DurationMsg
 from visualization_msgs.msg import Marker, MarkerArray
 from moveit_msgs.msg import AttachedCollisionObject, CollisionObject
 from control_msgs.action import GripperCommand, FollowJointTrajectory
@@ -49,6 +51,12 @@ class GraspState:
     CLOSING_GRIPPER = "CLOSING_GRIPPER"
     LIFTING = "LIFTING"
     RETURNING_HOME = "RETURNING_HOME"
+    TRANSPORTING = "TRANSPORTING"
+    PLACING = "PLACING"
+    RELEASING = "RELEASING"
+    RETREATING = "RETREATING"
+    VERIFYING_PLACE = "VERIFYING_PLACE"
+    REDETECTING = "REDETECTING"
     DONE = "DONE"
     ERROR = "ERROR"
 
@@ -76,6 +84,28 @@ class GraspExecutorNode(Node):
         self.declare_parameter('sim_gazebo', False)
         # true = stop after the first grasp attempt instead of re-arming.
         self.declare_parameter('single_shot', False)
+        # Carry the grasped box to (pick xy + place_dx/dy), set it down,
+        # release, retreat home, then confirm with live perception.
+        self.declare_parameter('place_enabled', False)
+        self.declare_parameter('place_dx', 0.0)
+        self.declare_parameter('place_dy', 0.20)
+        self.declare_parameter('place_tolerance', 0.04)
+        self.declare_parameter('verify_timeout_sec', 60.0)
+        # How far above the grasp height the box is carried (the "full" lift).
+        self.declare_parameter('lift_height', 0.30)
+        # Two-leg demo: pick from home, put it down at a random spot, then
+        # find it again with SAM2 + FoundationPose, pick it up and return it home.
+        self.declare_parameter('mission', False)
+        self.declare_parameter('slow_descent', False)
+        self.declare_parameter('descent_duration_sec', 8.0)
+        self.declare_parameter('home_x', 0.80)
+        self.declare_parameter('home_y', 0.0)
+        self.declare_parameter('random_seed', -1)
+        self.declare_parameter('place_x_min', 0.65)
+        self.declare_parameter('place_x_max', 0.95)
+        self.declare_parameter('place_y_min', 0.10)
+        self.declare_parameter('place_y_max', 0.25)
+        self.declare_parameter('min_place_separation', 0.12)
 
         self.planning_group = self.get_parameter('planning_group').value
         self.gripper_group = self.get_parameter('gripper_group').value
@@ -86,6 +116,21 @@ class GraspExecutorNode(Node):
         self.velocity_scale = self.get_parameter('max_velocity_scaling').value
         self.sim_gazebo = self.get_parameter('sim_gazebo').value
         self.single_shot = self.get_parameter('single_shot').value
+        self.place_enabled = self.get_parameter('place_enabled').value or self.get_parameter('mission').value
+        self.place_dx = self.get_parameter('place_dx').value
+        self.place_dy = self.get_parameter('place_dy').value
+        self.place_tolerance = self.get_parameter('place_tolerance').value
+        self.verify_timeout = self.get_parameter('verify_timeout_sec').value
+        self.place_result = None
+        self.lift_height = self.get_parameter('lift_height').value
+        self.mission = self.get_parameter('mission').value
+        self.slow_descent = self.get_parameter('slow_descent').value
+        self.descent_duration = self.get_parameter('descent_duration_sec').value
+        self.home_x = self.get_parameter('home_x').value
+        self.home_y = self.get_parameter('home_y').value
+        seed = self.get_parameter('random_seed').value
+        self.rng = np.random.default_rng(None if seed < 0 else seed)
+        self.collect_poses = None
 
         self.get_logger().info("Grasp executor starting...")
 
@@ -157,6 +202,7 @@ class GraspExecutorNode(Node):
 
         self.latest_joint_velocities = {}
         self.latest_joint_positions = {}
+        self.latest_joint_efforts = {}
         if self.sim_gazebo:
             # gz_ros2_control's joint_state_broadcaster publishes with
             # best-effort QoS; a default (reliable) subscription here is
@@ -168,6 +214,7 @@ class GraspExecutorNode(Node):
                 qos_profile_sensor_data)
 
         self.status_pub = self.create_publisher(String, '/grasp_status', 10)
+        self.reinit_pub = self.create_publisher(Empty, '/foundationpose/reinit', 10)
         self.target_pub = self.create_publisher(PoseStamped, '/grasp_target', 10)
         self.marker_pub = self.create_publisher(MarkerArray, '/grasp_markers', 10)
         self.attached_object_pub = self.create_publisher(
@@ -239,6 +286,10 @@ class GraspExecutorNode(Node):
         with self.psm.read_write() as scene:
             for link in touch_links:
                 scene.allowed_collision_matrix.set_entry(link, 'sugar_box', allowed)
+            # The perceived box height jitters by a few mm, so a box resting
+            # on the table intermittently intersects it in the planning
+            # model and fails the start-state collision check.
+            scene.allowed_collision_matrix.set_entry('sugar_box', 'table', allowed)
             scene.current_state.update()
 
     def _joint_state_cb(self, msg: JointState):
@@ -246,6 +297,8 @@ class GraspExecutorNode(Node):
             self.latest_joint_velocities[name] = vel
         for name, pos in zip(msg.name, msg.position):
             self.latest_joint_positions[name] = pos
+        for name, eff in zip(msg.name, msg.effort):
+            self.latest_joint_efforts[name] = eff
 
     def _wait_for_arm_settle(self, timeout_sec: float = 8.0,
                               velocity_threshold: float = 0.01):
@@ -275,6 +328,8 @@ class GraspExecutorNode(Node):
 
     def _pose_callback(self, msg: PoseStamped):
         self.latest_pose = msg
+        if self.collect_poses is not None and self._in_workspace(msg):
+            self.collect_poses.append(msg)
         if self.grasp_in_progress:
             return
         self.pose_buffer.append(msg)
@@ -411,6 +466,13 @@ class GraspExecutorNode(Node):
             self.arm.set_goal_state(pose_stamped_msg=goal_pose, pose_link=self.eef_link)
 
         plan = self.arm.plan()
+        if not plan and not _retry:
+            # A stale sugar_box left in the planning scene (e.g. from
+            # perception's first frames) can make the start state look
+            # colliding for a moment; give the scene a moment to catch up.
+            self.get_logger().warn("Planning failed; retrying once after 2 s")
+            time.sleep(2.0)
+            return self._plan_and_execute_arm(goal_pose, configuration_name, _retry=True)
         if not plan:
             return False
 
@@ -433,7 +495,11 @@ class GraspExecutorNode(Node):
                     f"Arm settled {pos_err * 1000:.1f}mm off target; "
                     "issuing one corrective move"
                 )
-                return self._plan_and_execute_arm(goal_pose=goal_pose, _retry=True)
+                # Best effort: the move itself already executed, so a failed
+                # correction (e.g. the exact goal is in collision) is not fatal.
+                if not self._plan_and_execute_arm(goal_pose=goal_pose, _retry=True):
+                    self.get_logger().warn(
+                        "Corrective move could not be planned; continuing from where the arm settled")
         return True
 
     def _send_arm_trajectory(self, joint_trajectory) -> bool:
@@ -485,8 +551,21 @@ class GraspExecutorNode(Node):
             errs = {n: self.latest_joint_positions.get(n, float('nan')) - v for n, v in tgt.items()}
             self.get_logger().info(
                 "JOINT ERR (rad): " + " ".join(f"{n.replace('_joint','')}={e:+.4f}" for n, e in errs.items())
+                + " | EFFORT (Nm): " + " ".join(
+                    f"{n.replace('_joint','')}={self.latest_joint_efforts.get(n, float('nan')):+.1f}"
+                    for n in errs)
             )
         return True
+
+    def _tcp_xyz(self, default):
+        try:
+            t = self.tf_buffer.lookup_transform(
+                'world', self.eef_link, rclpy.time.Time(), Duration(seconds=0.5))
+            p = t.transform.translation
+            return (p.x, p.y, p.z)
+        except Exception as e:
+            self.get_logger().warn(f"TCP lookup failed ({e!r}); using commanded pose")
+            return default
 
     def _log_arm_accuracy(self, goal_pose: PoseStamped):
         """Real achieved-vs-commanded TCP position right after execute()
@@ -712,64 +791,323 @@ class GraspExecutorNode(Node):
                     "the OMPL failure may be a sampling or tolerance issue."
                 )
 
+    @staticmethod
+    def _in_workspace(msg: PoseStamped) -> bool:
+        """Perception can emit garbage while initializing (and the box is
+        high while carried); only trust poses of a box on the table."""
+        p = msg.pose.position
+        return 0.5 < p.x < 1.1 and -0.35 < p.y < 0.45 and 0.70 < p.z < 0.82
+
     def _moveit_execute_sequence(self, pre_grasp: PoseStamped, grasp: PoseStamped) -> bool:
         # grant this up front so the sequence recovers even if the robot starts in contact
         self._allow_gripper_box_collision(True)
+        if self.mission:
+            return self._run_mission(pre_grasp, grasp)
+        return self._pick_and_place(pre_grasp, grasp, first_leg=True, target_xy=None)
 
-        # Step 1: home
-        self._publish_status(GraspState.MOVING_HOME)
-        self.get_logger().info("Moving to home position...")
-        if not self._plan_and_execute_arm(configuration_name='home'):
-            self.get_logger().error("Failed to plan to home position")
+    def _sample_place_target(self, avoid):
+        """Random table spot at least min_place_separation from every point in `avoid`."""
+        x0, x1 = self.get_parameter('place_x_min').value, self.get_parameter('place_x_max').value
+        y0, y1 = self.get_parameter('place_y_min').value, self.get_parameter('place_y_max').value
+        sep = self.get_parameter('min_place_separation').value
+        for _ in range(200):
+            x, y = float(self.rng.uniform(x0, x1)), float(self.rng.uniform(y0, y1))
+            if all(((x - ax) ** 2 + (y - ay) ** 2) ** 0.5 >= sep for ax, ay in avoid):
+                return x, y
+        return x1, y1
+
+    def _run_mission(self, pre1: PoseStamped, grasp1: PoseStamped) -> bool:
+        """Leg 1: pick the box from home and put it down at a random spot.
+        Leg 2: with the arm out of the way, SAM2 + FoundationPose find the box
+        again from the camera alone; pick it from there and return it home."""
+        home = (self.home_x, self.home_y)
+        target1 = self._sample_place_target(avoid=[home])
+        self.get_logger().info(
+            f"MISSION leg 1: pick at ({grasp1.pose.position.x:.3f}, {grasp1.pose.position.y:.3f}), "
+            f"place at random ({target1[0]:.3f}, {target1[1]:.3f})")
+        if not self._pick_and_place(pre1, grasp1, first_leg=True, target_xy=target1,
+                                    resample_avoid=[home]):
             return False
 
-        # Step 2: open gripper before descending
+        found = self._redetect()
+        if found is None:
+            self.get_logger().error("MISSION: perception did not find the box after leg 1")
+            return False
+        self.get_logger().info(
+            f"MISSION: perception found the box at ({found.pose.position.x:.3f}, "
+            f"{found.pose.position.y:.3f}); target was ({self.leg1_target[0]:.3f}, "
+            f"{self.leg1_target[1]:.3f})")
+
+        grasp2 = self._compute_grasp_pose(found)
+        pre2 = self._compute_pre_grasp_pose(grasp2)
+        self.target_pub.publish(grasp2)
+        self.get_logger().info(
+            f"MISSION leg 2: pick at perceived ({grasp2.pose.position.x:.3f}, "
+            f"{grasp2.pose.position.y:.3f}), return to home ({home[0]:.3f}, {home[1]:.3f})")
+        if not self._pick_and_place(pre2, grasp2, first_leg=False, target_xy=home):
+            return False
+
+        final = self._redetect()
+        if final is not None:
+            d = ((final.pose.position.x - home[0]) ** 2 + (final.pose.position.y - home[1]) ** 2) ** 0.5
+            self.get_logger().info(
+                f"MISSION complete: perceived final box position ({final.pose.position.x:.3f}, "
+                f"{final.pose.position.y:.3f}), {d * 1000:.0f} mm from home")
+        return True
+
+    def _redetect(self, timeout_sec: float = 60.0):
+        """Ask FoundationPose to register the box afresh and return a stable,
+        on-table pose from live perception (None on timeout)."""
+        self._publish_status(GraspState.REDETECTING)
+        self.get_logger().info("Re-detecting the box with live SAM2 + FoundationPose...")
+        time.sleep(1.5)  # let the arm's motion settle out of view
+        self.collect_poses = []
+        self.reinit_pub.publish(Empty())
+        deadline = time.monotonic() + timeout_sec
+        try:
+            while time.monotonic() < deadline:
+                time.sleep(0.3)
+                recent = list(self.collect_poses)[-10:]
+                if len(recent) == 10:
+                    arr = np.array([[m.pose.position.x, m.pose.position.y, m.pose.position.z]
+                                    for m in recent])
+                    if np.max(np.std(arr, axis=0)) < 0.01:
+                        out = recent[-1]
+                        out.pose.position.x, out.pose.position.y, out.pose.position.z = \
+                            [float(v) for v in arr.mean(axis=0)]
+                        return out
+                if int(time.monotonic() - (deadline - timeout_sec)) % 15 == 14:
+                    self.reinit_pub.publish(Empty())
+        finally:
+            self.collect_poses = None
+        return None
+
+    def _pick_and_place(self, pre_grasp: PoseStamped, grasp: PoseStamped,
+                        first_leg: bool, target_xy, resample_avoid=None) -> bool:
+        """Pick the box at `grasp`. With place enabled it is lifted fully,
+        carried to target_xy (or pick + place_dx/dy when None), set down,
+        released and the arm retreats home; otherwise it just lifts and
+        returns home."""
+        if first_leg:
+            self._publish_status(GraspState.MOVING_HOME)
+            self.get_logger().info("Moving to home position...")
+            if not self._plan_and_execute_arm(configuration_name='home'):
+                self.get_logger().error("Failed to plan to home position")
+                return False
+
         self._publish_status(GraspState.OPENING_GRIPPER)
         self.get_logger().info("Opening gripper...")
         if not self._plan_and_execute_gripper('open'):
             self.get_logger().error("Failed to open gripper")
             return False
 
-        # Step 3: pre-grasp
         self._publish_status(GraspState.PRE_GRASP)
+        if not first_leg:
+            # A direct home -> pre-grasp plan is unreliable toward the edges
+            # of the table; going to a point high above the box first (the
+            # same kind of pose the carry already reaches) and then straight
+            # down is much more robust.
+            high = self._shifted(pre_grasp, 0.0, 0.0,
+                                 grasp.pose.position.z + 0.08 + self.lift_height)
+            self.get_logger().info("Approaching from above...")
+            if not self._plan_and_execute_arm(goal_pose=high):
+                self.get_logger().error("Failed to plan approach above the box")
+                return False
+            if not self._straight_vertical(high, pre_grasp.pose.position.z, steps=6, duration_sec=4.0):
+                self.get_logger().warn("Straight descent unavailable; planning the pre-grasp directly")
         self.get_logger().info("Moving to pre-grasp position...")
         if not self._plan_and_execute_arm(goal_pose=pre_grasp):
             self.get_logger().error("Failed to plan pre-grasp trajectory")
             return False
 
-        # Step 4: down to grasp
         self._publish_status(GraspState.GRASPING)
         self.get_logger().info("Moving down to grasp...")
         self._diagnose_grasp_pose(grasp)
-        if not self._plan_and_execute_arm(goal_pose=grasp):
+        # A fast OMPL descent stalled ~8 cm short with the box in the way (the
+        # same descent with no box, or in a much slower simulation, reached
+        # full depth), so go down as a slow straight vertical line first.
+        slow_ok = self.slow_descent and self._straight_vertical(
+            pre_grasp, grasp.pose.position.z, steps=12, duration_sec=self.descent_duration)
+        if slow_ok:
+            self._log_arm_accuracy(grasp)
+        elif not self._plan_and_execute_arm(goal_pose=grasp):
             self.get_logger().error("Failed to plan grasp trajectory")
             return False
 
-        # Step 5: close gripper + attach
         self._publish_status(GraspState.CLOSING_GRIPPER)
         self.get_logger().info("Closing gripper...")
         if not self._plan_and_execute_gripper('closed'):
             self.get_logger().error("Failed to close gripper")
             return False
         self._attach_box()
+        gp = grasp.pose.position
+        grasp_tcp = self._tcp_xyz(default=(gp.x, gp.y, gp.z))
+        self.get_logger().info(
+            f"GRASP TCP (achieved): ({grasp_tcp[0]:.3f}, {grasp_tcp[1]:.3f}, {grasp_tcp[2]:.3f}) "
+            f"vs commanded ({gp.x:.3f}, {gp.y:.3f}, {gp.z:.3f})")
 
-        # Step 6: lift
         self._publish_status(GraspState.LIFTING)
-        self.get_logger().info("Lifting...")
-        if not self._plan_and_execute_arm(goal_pose=pre_grasp):
+        if self.place_enabled:
+            carry_z = grasp_tcp[2] + self.lift_height
+            lift = self._shifted(grasp, 0.0, 0.0, carry_z)
+            lift.pose.position.x, lift.pose.position.y = grasp_tcp[0], grasp_tcp[1]
+            self.get_logger().info(f"Lifting fully to z={carry_z:.3f}...")
+        else:
+            lift = pre_grasp
+            self.get_logger().info("Lifting...")
+        if not self._plan_and_execute_arm(goal_pose=lift):
             self.get_logger().error("Failed to plan lift trajectory")
             return False
 
-        # Step 7: return home + detach
+        if self.place_enabled:
+            return self._place_sequence(grasp, grasp_tcp, target_xy, carry_z,
+                                        verify=not self.mission,
+                                        resample_avoid=resample_avoid)
+
         self._publish_status(GraspState.RETURNING_HOME)
         self.get_logger().info("Returning home...")
         if not self._plan_and_execute_arm(configuration_name='home'):
             self.get_logger().error("Failed to plan return-home trajectory")
             return False
         self._detach_box()
-
         self.get_logger().info("Object lifted and returned home!")
         return True
+
+    _ARM_JOINTS = ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint',
+                   'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint']
+
+    def _straight_vertical(self, pose: PoseStamped, end_z: float, steps: int = 10,
+                     duration_sec: float = 5.0) -> bool:
+        """Move the TCP straight up from `pose` to end_z, keeping x, y and
+        orientation, as a chain of IK waypoints sent as one slow trajectory.
+        A free OMPL move here could swing sideways while the fingertips are
+        still beside the box and drag or topple it."""
+        try:
+            positions = []
+            with self.psm.read_only() as scene:
+                rs = scene.current_state
+                x, y = pose.pose.position.x, pose.pose.position.y
+                z0 = pose.pose.position.z
+                for i in range(1, steps + 1):
+                    wp = Pose()
+                    wp.position.x, wp.position.y = x, y
+                    wp.position.z = z0 + (end_z - z0) * i / steps
+                    wp.orientation = pose.pose.orientation
+                    if not rs.set_from_ik(self.planning_group, wp, self.eef_link, 0.2):
+                        self.get_logger().warn(f"Straight-up IK failed at step {i}")
+                        return False
+                    rs.update()
+                    positions.append([float(v) for v in
+                                      rs.get_joint_group_positions(self.planning_group)])
+            from trajectory_msgs.msg import JointTrajectory
+            jt = JointTrajectory()
+            jt.joint_names = list(self._ARM_JOINTS)
+            for i, q in enumerate(positions, start=1):
+                pt = JointTrajectoryPoint()
+                pt.positions = q
+                pt.velocities = [0.0] * 6
+                t = duration_sec * i / steps
+                pt.time_from_start = DurationMsg(sec=int(t), nanosec=int((t % 1) * 1e9))
+                jt.points.append(pt)
+            return self._send_arm_trajectory(jt)
+        except Exception as e:
+            self.get_logger().warn(f"Straight-up retreat failed: {e!r}")
+            return False
+
+    def _shifted(self, pose: PoseStamped, dx: float, dy: float, z: float) -> PoseStamped:
+        out = PoseStamped()
+        out.header = pose.header
+        out.pose.position.x = pose.pose.position.x + dx
+        out.pose.position.y = pose.pose.position.y + dy
+        out.pose.position.z = z
+        out.pose.orientation = pose.pose.orientation
+        return out
+
+    def _place_sequence(self, grasp: PoseStamped, grasp_tcp, target_xy, carry_z: float,
+                        verify: bool = True, resample_avoid=None) -> bool:
+        """Carry the held box to target_xy, set it down, release, retreat.
+        The place height is the TCP height actually reached when the
+        gripper closed, so the box goes down to the table at the same grip
+        offset it was picked up with."""
+        gx, gy, gz = grasp_tcp
+        if target_xy is None:
+            target_xy = (gx + self.place_dx, gy + self.place_dy)
+        tgt_x, tgt_y = target_xy
+
+        self._publish_status(GraspState.TRANSPORTING)
+        for attempt in range(3):
+            pre_place = self._shifted(grasp, 0.0, 0.0, carry_z)
+            pre_place.pose.position.x, pre_place.pose.position.y = tgt_x, tgt_y
+            self.get_logger().info(
+                f"Transporting to pre-place ({tgt_x:.3f}, {tgt_y:.3f}, {carry_z:.3f})...")
+            if self._plan_and_execute_arm(goal_pose=pre_place):
+                break
+            if resample_avoid is None or attempt == 2:
+                self.get_logger().error("Failed to plan transport trajectory")
+                return False
+            tgt_x, tgt_y = self._sample_place_target(avoid=resample_avoid)
+            self.get_logger().warn(f"Target unreachable; trying another random spot ({tgt_x:.3f}, {tgt_y:.3f})")
+        self.leg1_target = (tgt_x, tgt_y)
+
+        self._publish_status(GraspState.PLACING)
+        place = self._shifted(grasp, 0.0, 0.0, gz + 0.005)
+        place.pose.position.x, place.pose.position.y = tgt_x, tgt_y
+        self.get_logger().info(f"Lowering to place z={place.pose.position.z:.3f}...")
+        if not self._plan_and_execute_arm(goal_pose=place):
+            self.get_logger().error("Failed to plan place trajectory")
+            return False
+
+        self._detach_box()
+        self._publish_status(GraspState.RELEASING)
+        self.get_logger().info("Releasing...")
+        if not self._plan_and_execute_gripper('open'):
+            self.get_logger().error("Failed to open gripper at place")
+            return False
+
+        self._publish_status(GraspState.RETREATING)
+        self.get_logger().info("Retreating straight up...")
+        time.sleep(1.0)  # let the fingers finish opening before anything moves
+        if not self._straight_vertical(place, carry_z):
+            self.get_logger().warn("Straight retreat unavailable; falling back to a planned retreat")
+            if not self._plan_and_execute_arm(goal_pose=pre_place):
+                self.get_logger().error("Failed to plan retreat trajectory")
+                return False
+        if not self._plan_and_execute_arm(configuration_name='home'):
+            self.get_logger().error("Failed to plan return-home trajectory")
+            return False
+
+        if verify:
+            return self._verify_place(tgt_x, tgt_y)
+        return True
+
+    def _verify_place(self, tgt_x: float, tgt_y: float) -> bool:
+        """With the arm out of the camera's way, wait for live SAM2 +
+        FoundationPose to report a stable box pose and compare it to the
+        intended place position."""
+        self._publish_status(GraspState.VERIFYING_PLACE)
+        self.get_logger().info("Verifying placement with live perception...")
+        deadline = time.monotonic() + self.verify_timeout
+        last_stamp = None
+        recent = []
+        while time.monotonic() < deadline:
+            pose = self.latest_pose
+            if pose is not None and (pose.header.stamp.sec, pose.header.stamp.nanosec) != last_stamp:
+                last_stamp = (pose.header.stamp.sec, pose.header.stamp.nanosec)
+                recent.append([pose.pose.position.x, pose.pose.position.y, pose.pose.position.z])
+                recent = recent[-10:]
+                if len(recent) == 10 and np.max(np.std(np.array(recent), axis=0)) < 0.01:
+                    m = np.mean(np.array(recent), axis=0)
+                    err = ((m[0] - tgt_x) ** 2 + (m[1] - tgt_y) ** 2) ** 0.5
+                    ok = err <= self.place_tolerance
+                    self.place_result = {'perceived': m.tolist(), 'target': [tgt_x, tgt_y], 'err': err}
+                    self.get_logger().info(
+                        f"PLACE {'VERIFIED' if ok else 'OFF TARGET'}: perceived box at "
+                        f"({m[0]:.3f}, {m[1]:.3f}), target ({tgt_x:.3f}, {tgt_y:.3f}), "
+                        f"xy error {err * 1000:.1f} mm (tolerance {self.place_tolerance * 1000:.0f} mm)")
+                    return ok
+            time.sleep(0.2)
+        self.get_logger().error("Placement not verified: no stable perceived pose before timeout")
+        return False
 
     def _mock_execute_sequence(self, pre_grasp: PoseStamped, grasp: PoseStamped) -> bool:
         self.get_logger().info("=== MOCK GRASP SEQUENCE ===")

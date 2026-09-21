@@ -30,7 +30,8 @@ LEG_XY_OFFSETS = [
     (0.8 - 0.54, -0.34),
 ]
 
-ATTACHED_STATES = {'CLOSING_GRIPPER', 'LIFTING', 'RETURNING_HOME'}
+ATTACHED_STATES = {'CLOSING_GRIPPER', 'LIFTING', 'RETURNING_HOME',
+                   'TRANSPORTING', 'PLACING'}
 
 
 class PlanningSceneManagerNode(Node):

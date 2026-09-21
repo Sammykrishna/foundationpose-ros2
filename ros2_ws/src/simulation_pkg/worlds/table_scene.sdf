@@ -25,6 +25,8 @@
             name="gz::sim::systems::Sensors">
       <render_engine>ogre2</render_engine>
     </plugin>
+    <plugin filename="gz-sim-contact-system"
+            name="gz::sim::systems::Contact"/>
     <plugin filename="gz-sim-scene-broadcaster-system"
             name="gz::sim::systems::SceneBroadcaster"/>
     <plugin filename="gz-sim-user-commands-system"
@@ -143,6 +145,9 @@
           <geometry>
             <box><size>0.0495 0.0942 0.176</size></box>
           </geometry>
+          <surface>
+            <friction><ode><mu>3.0</mu><mu2>3.0</mu2></ode></friction>
+          </surface>
         </collision>
         <visual name="visual">
           <geometry>
@@ -153,6 +158,11 @@
             <diffuse>0.8 0.2 0.1 1</diffuse>
           </material>
         </visual>
+        <sensor name="box_contact" type="contact">
+          <always_on>1</always_on>
+          <update_rate>100</update_rate>
+          <contact><collision>collision</collision></contact>
+        </sensor>
       </link>
     </model>
 
